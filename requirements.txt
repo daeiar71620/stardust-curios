@@ -1,0 +1,2 @@
+# Native spectator dependency. Tkinter and CJK fonts are OS packages; see README.
+Pillow==12.3.0

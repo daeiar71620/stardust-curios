@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.venv/
+*.lock
+*.log
+*.pid
+*.tmp
+.DS_Store
+.library-helper/
+/save.json
+/observation.json
+/new-game*.json
+*.observation.json
+*.before-restore.json
+/backups/
+/saves/
+/screenshots/
