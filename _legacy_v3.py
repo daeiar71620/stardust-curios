@@ -20,7 +20,7 @@ import sys
 import tempfile
 from contextlib import contextmanager
 
-VERSION = 5
+VERSION = 3
 TOTAL_DAYS = 7
 DEFAULT_SAVE = Path(__file__).resolve().with_name("save.json")
 GOAL = {"credits": 650, "collection": 2}
@@ -64,11 +64,11 @@ SUPPLIERS = {
 UPGRADE_RULES = {
     "workbench": {"name": "工作台", "costs": [70, 110, 260], "effects": ["基础修理：失手24%", "修理费减18%，失手14%", "修理费减36%，失手7%", "修理费减54%，失手3%"]},
     "shelf": {"name": "货架", "costs": [65, 100, 240], "effects": ["7格货架 / 每日12精力", "10格货架 / 每日13精力", "13格货架 / 每日14精力", "16格货架 / 每日15精力"]},
-    "display": {"name": "展示柜", "costs": [120, 230, 420], "effects": ["朴素展示", "成交基础率+5百分点", "成交基础率+10百分点 / 多1位访客", "成交基础率+15百分点 / 多1位访客"]},
+    "display": {"name": "展示柜", "costs": [120, 230, 420], "effects": ["朴素展示", "成交检定+1", "成交检定+2 / 多1位访客", "成交检定+3 / 多1位访客"]},
 }
 SET_RULES = {
     "tool": ("星港修理铺", "收藏3种工具，所有修理费再减4星币"),
-    "artifact": ("小小宇宙馆", "收藏3种奇物，所有成交基础率+5百分点"),
+    "artifact": ("小小宇宙馆", "收藏3种奇物，所有成交检定+1"),
     "bot": ("值夜小分队", "收藏3种机器人，每日精力+1"),
     "plant": ("窗边温室", "收藏3种植物，每日维护费减4星币"),
     "signal": ("远方的朋友", "收藏3种信号物品，回收箱每日供货+1"),
@@ -76,9 +76,9 @@ SET_RULES = {
 EVENTS = [
     {"id": "calm", "title": "平静靠港日", "description": "航道平稳，适合整理库存和照顾收藏。", "sale_multiplier": 1.0, "salvage_discount": 0, "repair_discount": 0, "cost_delta": 0, "energy_delta": 0},
     {"id": "meteor", "title": "流星回收潮", "description": "回收箱便宜8星币；忙碌的搬运让每日精力少1点。", "sale_multiplier": 1.0, "salvage_discount": 8, "repair_discount": 0, "cost_delta": 0, "energy_delta": -1},
-    {"id": "festival", "title": "星灯夜市", "description": "成交基础率+10百分点；照明维护费多6星币。", "sale_multiplier": 1.12, "salvage_discount": 0, "repair_discount": 0, "cost_delta": 6, "energy_delta": 0},
+    {"id": "festival", "title": "星灯夜市", "description": "成交检定+2；照明维护费多6星币。", "sale_multiplier": 1.12, "salvage_discount": 0, "repair_discount": 0, "cost_delta": 6, "energy_delta": 0},
     {"id": "workshop", "title": "机修师互助日", "description": "修理费减6星币；适合给有潜力的旧物第二次机会。", "sale_multiplier": 1.0, "salvage_discount": 0, "repair_discount": 6, "cost_delta": 0, "energy_delta": 0},
-    {"id": "fog", "title": "星云浓雾", "description": "来客更谨慎，成交基础率-10百分点；港务处减免4星币维护费。", "sale_multiplier": 0.90, "salvage_discount": 0, "repair_discount": 0, "cost_delta": -4, "energy_delta": 0},
+    {"id": "fog", "title": "星云浓雾", "description": "来客更谨慎，成交检定-2；港务处减免4星币维护费。", "sale_multiplier": 0.90, "salvage_discount": 0, "repair_discount": 0, "cost_delta": -4, "energy_delta": 0},
     {"id": "tailwind", "title": "顺风补给日", "description": "物流顺畅，每日精力+1，今天可以多做一件事。", "sale_multiplier": 1.0, "salvage_discount": 0, "repair_discount": 0, "cost_delta": 0, "energy_delta": 1},
 ]
 CUSTOMERS = [
@@ -106,17 +106,14 @@ HELP = """星屑杂货铺 · 七天首周，长期经营
   inspect I001              查看公开估值，不改变运气
   repair I001               修理，2精力，每件最多2次、每天1次
   price I001 120            免费定价，1–9999整数
-  sell I001 [顾客ID]         初次双D10百分骰检定，1精力；省略顾客为旅客
+  sell I001 [顾客ID]         初次D20成交检定，1精力；省略顾客为旅客
   accept I001               接受客人的唯一还价，免费且不掷骰
   decline I001              谢绝还价，免费且结束当天接待
-  preview-offer I001 120    只读风险预览；不消耗精力或随机数
-  offer I001 120            客人还价 < 最终报价 < 初次标价；1精力，最后一次双D10百分骰
+  offer I001 120            最终报价，1–初次标价，1精力；最后一次D20
   collect I001              永久收藏，1精力；3种同类收藏解锁套装效果
   upgrade workbench|shelf|display  升级，2精力，每项3级
   endday                    支付当日维护费，推进日期
   continue                  首周结算后明确继续到第8天；不重开、不再扣第7天费用
-  import-v4 原存档路径       只读还价版并复制至新的 --save 路径；历史D20不重判
-  import-v3 原存档路径       只读掷骰版并复制至新的 --save 路径；不重掷
   import-v2 原存档路径       只读扩展版并升级至新的 --save 路径；原文件不变
   import-v1 原存档路径       只读旧版并迁移至新的 --save 路径；原文件不变
   restart --confirm         明确清空当前这一个存档并开新局
@@ -125,9 +122,7 @@ HELP = """星屑杂货铺 · 七天首周，长期经营
 24种货物、每日事件、偏好顾客、5种收藏套装和持续阶段目标。
 现金用于经营、修理、扩店；收藏不可卖回。顾客预算与成交价有不确定性。
 每天每件货物只有一场接待，最多初次与最终两骰；每位特邀顾客只接待一次。
-双D10分别取十位00–90和个位0–9；00+0记100。掷低点：01大成功、100大失败。
-01一见钟情突破普通意愿与预算，按合法报价成交；100立即结束接待。
-最终成功率按相对还价涨幅下降，无固定拒价惩罚。这是CoC启发的简化房规。
+天然20一见钟情：突破普通意愿与预算，按合法报价成交；天然1失手直接结束。
 普通失败给一次还价，待谈时锁定该货；endday自动谢绝未完成谈判。
 公开observation不包含箱内货物、真实基价、买家确切预算或随机状态。
 """
@@ -356,18 +351,10 @@ def observation(state):
         "negotiation": _public_negotiation(state),
         "last_roll": copy.deepcopy(state["roll_history"][-1]) if state["roll_history"] else None,
         "roll_history": copy.deepcopy(state["roll_history"]),
-        "trade_rules": {"die": "D100", "dice": ["D10 tens 00–90", "D10 ones 0–9"],
-                        "direction": "roll_low", "zero_zero": 100,
-                        "critical": 1, "fumble": 100,
-                        "critical_rule": "01一见钟情，突破普通意愿和预算，按合法报价成交",
-                        "fumble_rule": "100大失败，本日该货接待立即结束",
-                        "house_rules": "CoC启发的简化房规，非官方完整规则",
-                        "max_rolls_per_item_day": 2, "price_limit": 9999, "final_offer_energy": 1,
-                        "final_offer_rule": "counter_offer < price < original_price",
-                        "final_chance_formula": "clamp(1,99,floor(clamp(1,99,70+bonus)*counter/(2*price-counter)))",
-                        "initial_chance_formula": "clamp(1,99,floor(60+bonus-50*log2(price/reference))); above hidden budget: 1",
-                        "final_budget_rule": "还价已反映预算，最终报价不再施加隐藏预算门槛",
-                        "endday": "自动谢绝未完成还价", "miracle_probability": 0.01},
+        "trade_rules": {"die": "D20", "natural_20": "一见钟情，突破普通意愿和预算，按本次合法报价成交",
+                        "natural_1": "失手，本日该货接待立即结束", "max_rolls_per_item_day": 2,
+                        "price_limit": 9999, "final_offer_energy": 1,
+                        "endday": "自动谢绝未完成还价", "miracle_probability": 0.05},
     }
 
 
@@ -404,54 +391,14 @@ def _make_cargo(rng, supplier):
 
 
 
-def _final_price(pending, raw_price):
-    try:
-        price = int(raw_price)
-    except (ValueError, TypeError) as exc:
-        raise GameError("最终报价须为整数，且严格高于客人还价、低于初次标价。") from exc
-    if (str(price) != raw_price.strip()
-            or not pending["counter_offer"] < price < pending["original_price"]):
-        raise GameError("最终报价须严格高于客人还价、低于初次标价；同价不能重掷，可直接 accept 接受还价。")
-    return price
-
-
-def _clamp_chance(value):
-    return max(1, min(99, value))
-
-
-def _final_chance(modifier, counter, price):
-    # Integer rational arithmetic: floor(base / (1 + 2 * premium)).
-    # No hidden valuation or second budget gate; the quote reflects affordability.
-    base = _clamp_chance(70 + modifier)
-    return base, _clamp_chance(base * counter // (2 * price - counter))
-
-
-def _offer_forecast(state, pending, price):
-    base, threshold = _final_chance(pending["context"]["modifier"], pending["counter_offer"], price)
-    return {"price": price, "basis": "public_counter", "base_chance": base,
-            "threshold": threshold, "probability": threshold / 100,
-            "premium": (price - pending["counter_offer"]) / pending["counter_offer"],
-            "modifier": pending["context"]["modifier"],
-            "modifiers": copy.deepcopy(pending["context"]["modifiers"]),
-            "critical_probability": 0.01, "fumble_probability": 0.01, "energy_cost": 1,
-            "accept_income": pending["counter_offer"], "success_income": price, "failure_income": 0,
-            "warning": "精确成功率，仅用公开还价和冻结加值；涨幅越大成功率越低。01必成、100必败；最终失败收入0，不能回头接受旧还价。"}
-
-
 def _public_negotiation(state):
     pending = state["negotiation"]
     if pending is None:
         return None
-    keys = ("item_id", "item_name", "customer_id", "customer_name", "original_price", "counter_offer",
-            "rules_version", "origin_rules_version")
-    low, high = pending["counter_offer"] + 1, pending["original_price"] - 1
+    keys = ("item_id", "item_name", "customer_id", "customer_name", "original_price", "counter_offer")
     return {key: copy.deepcopy(pending[key]) for key in keys} | {
         "remaining_offers": 1, "final_offer_energy": 1,
-        "final_offer_bounds": {"min": low, "max": high, "available": low <= high},
-        "accept_income": pending["counter_offer"], "final_failure_income": 0,
-        "preview": dict(_offer_forecast(state, pending, low), suggested=True) if low <= high else None,
         "commands": {"accept": f"accept {pending['item_id']}", "decline": f"decline {pending['item_id']}",
-                     "preview": f"preview-offer {pending['item_id']} 金额",
                      "offer": f"offer {pending['item_id']} 金额"}}
 
 
@@ -461,67 +408,62 @@ def _require_unlocked_item(state, item):
 
 
 def _trade_context(state, item, visitor):
-    # Percentage-point bonuses, frozen before the initial pair of digits.
+    # Snapshot all judgement inputs before the first die. Changes elsewhere in the
+    # shop cannot improve a pending final roll. No hidden willingness random draw.
     modifiers = []
     def add(label, value):
         if value:
             modifiers.append({"label": label, "value": value})
-    add("口碑", 5 * (min(state["reputation"], 15) // 5))
-    add("展示柜", 5 * state["upgrades"]["display"])
-    add("奇物收藏套装", 5 * int(_has_set(state, "artifact")))
+    add("口碑", min(state["reputation"], 15) // 5)
+    add("展示柜", state["upgrades"]["display"])
+    add("奇物收藏套装", int(_has_set(state, "artifact")))
     event_id = state["daily_event"]["id"]
-    add("星灯夜市", 10 if event_id == "festival" else 0)
-    add("星云浓雾", -10 if event_id == "fog" else 0)
+    add("星灯夜市", 2 if event_id == "festival" else 0)
+    add("星云浓雾", -2 if event_id == "fog" else 0)
     if visitor:
         add("顾客偏爱" if item["kind"] == visitor["preferred_kind"] else "偏好不合",
-            15 if item["kind"] == visitor["preferred_kind"] else -10)
+            3 if item["kind"] == visitor["preferred_kind"] else -2)
         add("符合品相期待" if item["condition"] >= visitor["min_condition"] else "品相未达期待",
-            5 if item["condition"] >= visitor["min_condition"] else -10)
+            1 if item["condition"] >= visitor["min_condition"] else -2)
     return {"reference": _actual_value(state, item), "budget": visitor["budget"] if visitor else None,
             "modifiers": modifiers, "modifier": sum(m["value"] for m in modifiers)}
 
 
-def _initial_chance(context, price):
-    # Native percentile formula, not a rounded conversion of a D20 target.
-    # The exact item reference and named buyer budget remain private.
-    threshold = _clamp_chance(math.floor(60 + context["modifier"] - 50 * math.log2(price / context["reference"])))
+def _trade_target(context, price):
+    # Rounded DC reveals a broad difficulty band, never the exact hidden value.
+    # Quality and demand affect reference; preferences, reputation, display and
+    # events are explicit bonuses. Ordinary outcomes respect the frozen budget.
+    target = max(2, min(99, math.ceil(11 + 10 * math.log2(price / context["reference"]))))
     if context["budget"] is not None and price > context["budget"]:
-        return 1
-    return threshold
+        target = max(target, 20 + context["modifier"])
+    return target
+
 
 
 def _counter_offer(context, asking):
-    # Same coarse affordability quote as v4, now expressed in percentage points.
-    offer = max(1, math.floor(context["reference"] * (0.75 + context["modifier"] / 200) / 10) * 10)
+    # Coarse quote bands avoid encoding precise hidden base or budget amounts.
+    offer = max(1, math.floor(context["reference"] * (0.75 + context["modifier"] * 0.025) / 10) * 10)
     if context["budget"] is not None:
         offer = min(offer, max(1, context["budget"] // 25 * 20))
     return max(1, min(asking - 1, offer))
 
-
 def _trade_roll(state, rng, item, visitor, price, context, stage):
-    tens, ones = rng.randint(0, 9) * 10, rng.randint(0, 9)
-    value = tens + ones or 100
-    counter = state["negotiation"]["counter_offer"] if stage == "final" else None
-    base, threshold = (_final_chance(context["modifier"], counter, price) if stage == "final"
-                       else (None, _initial_chance(context, price)))
-    success = value == 1 or (value != 100 and value <= threshold)
-    outcome = "miracle" if value == 1 else "fumble" if value == 100 else "success" if success else "failure"
-    explanation = {"miracle": "01 · 一见钟情！大成功突破普通意愿与预算，按本次合法报价成交。",
-                   "fumble": "100 · 大失败，客人告辞；今日这件货接待结束。",
-                   "success": "百分骰点数不高于成功阈值，正常成交。",
-                   "failure": "百分骰点数高于成功阈值。"}[outcome]
-    if stage == "final":
-        explanation += f" 基础率{base}%，还价上浮{(price-counter)/counter:.1%}，成功阈值{threshold}。"
-    if threshold == 1:
-        explanation += " 这次报价只有01能成交，成功率1%。"
+    face = rng.randint(1, 20)
+    target = _trade_target(context, price)
+    total = face + context["modifier"]
+    success = face == 20 or (face != 1 and total >= target)
+    outcome = "miracle" if face == 20 else "fumble" if face == 1 else "success" if success else "failure"
+    explanation = {"miracle": "天然20 · 一见钟情！幸运奇迹突破普通意愿与预算，按本次报价成交。",
+                   "fumble": "天然1 · 话没说投机，客人告辞；今日这件货接待结束。",
+                   "success": "D20 + 加值达到目标，正常成交。",
+                   "failure": "D20 + 加值未达目标。"}[outcome]
+    if target > 19 + context["modifier"]:
+        explanation += " 这次报价只有天然20能成交。"
     state["roll_seq"] += 1
     record = {"id": state["roll_seq"], "day": state["day"], "item_id": item["id"], "item_name": item["name"],
               "customer_id": visitor["id"] if visitor else None, "customer_name": visitor["name"] if visitor else "旅客",
-              "stage": stage, "die": "D100", "tens": tens, "ones": ones, "roll": value,
-              "modifier": context["modifier"], "modifiers": copy.deepcopy(context["modifiers"]),
-              "threshold": threshold, "probability": threshold / 100, "base_chance": base,
-              "premium": (price-counter)/counter if counter is not None else None,
-              "rules_version": VERSION, "counter_offer": counter,
+              "stage": stage, "face": face, "modifier": context["modifier"],
+              "modifiers": copy.deepcopy(context["modifiers"]), "total": total, "target": target,
               "success": success, "outcome": outcome, "price": price, "explanation": explanation}
     state["roll_history"].append(record)
     state["roll_history"] = state["roll_history"][-60:]
@@ -551,7 +493,7 @@ def _close_negotiation(state):
 
 
 def _roll_text(roll):
-    return f"双D10：{roll['tens']:02d} + {roll['ones']} → {roll['roll']:02d}；掷低点 ≤ {roll['threshold']}，成功率{roll['threshold']}%。{roll['explanation']}"
+    return f"D20掷出{roll['face']}，加值{roll['modifier']:+d}，合计{roll['total']} / 目标{roll['target']}。{roll['explanation']}"
 
 def apply_command(state, command, args):
     """Mutate an already-copied state. Errors must be discarded by its caller."""
@@ -655,22 +597,21 @@ def apply_command(state, command, args):
             visitor["status"] = "left"
         if roll["success"]:
             rep = _sale_settle(state, item, visitor, item["price"])
-            _event(state, "sale", "一见钟情 · 01大成功！" if roll["roll"] == 1 else "掷骰成交！",
+            _event(state, "sale", "一见钟情 · 天然20！" if roll["face"] == 20 else "掷骰成交！",
                    _roll_text(roll) + f" {buyer}买走「{item['name']}」，收入{item['price']}星币，口碑+{rep}。", item)
-        elif roll["roll"] == 100:
-            _event(state, "sale", "100大失败 · 客人告辞", _roll_text(roll), item)
+        elif roll["face"] == 1:
+            _event(state, "sale", "天然1 · 客人告辞", _roll_text(roll), item)
         else:
             # A real, binding customer quote, not an exact budget disclosure.
             offer = _counter_offer(context, item["price"])
             state["negotiation"] = {"item_id": item["id"], "item_name": item["name"],
                                     "customer_id": visitor["id"] if visitor else None, "customer_name": buyer,
                                     "original_price": item["price"], "counter_offer": offer,
-                                    "day": state["day"], "context": context, "initial_roll_id": roll["id"],
-                                    "rules_version": VERSION, "origin_rules_version": VERSION}
+                                    "day": state["day"], "context": context, "initial_roll_id": roll["id"]}
             if visitor:
                 visitor["status"] = "negotiating"
             _event(state, "negotiation", "客人还了一个价", _roll_text(roll) +
-                   f" {buyer}愿出{offer}星币。接受免费；最终报价须高于还价、低于初价，花1精力，成功率随相对还价涨幅下降；失败收入0，不能再接受旧还价。可先 preview-offer 预览。", item)
+                   f" {buyer}愿出{offer}星币。可接受、谢绝，或花1精力作唯一一次最终报价。", item)
         state["last_event"]["roll"] = copy.deepcopy(roll)
     elif command in {"accept", "decline", "offer"}:
         pending = state["negotiation"]
@@ -688,17 +629,22 @@ def apply_command(state, command, args):
             _close_negotiation(state)
             _event(state, "negotiation", "下回有缘", f"谢绝{buyer}的还价，「{item['name']}」留在货架；今日该货接待结束。", item)
         else:
-            price = _final_price(pending, args[1])
+            try:
+                price = int(args[1])
+            except (ValueError, TypeError) as exc:
+                raise GameError("最终报价必须是1至初次标价的整数。") from exc
+            if not 1 <= price <= pending["original_price"] or str(price) != args[1].strip():
+                raise GameError("最终报价必须是1至初次标价的整数；不能借还价抬高初次标价。")
             _spend(state, energy=1)
             roll = _trade_roll(state, rng, item, visitor, price, pending["context"], "final")
             _close_negotiation(state)
             item["price"] = price
             if roll["success"]:
                 rep = _sale_settle(state, item, visitor, price)
-                _event(state, "sale", "最终报价 · 01大成功！" if roll["roll"] == 1 else "最终报价 · 成交！",
+                _event(state, "sale", "最终报价 · 一见钟情！" if roll["face"] == 20 else "最终报价 · 成交！",
                        _roll_text(roll) + f" {buyer}买走「{item['name']}」，收入{price}星币，口碑+{rep}。", item)
             else:
-                _event(state, "sale", "最终报价 · 客人告辞", _roll_text(roll) + " 唯一一次还价已用，本次收入0；不能再接受旧还价，今天不能再出售这件货。", item)
+                _event(state, "sale", "最终报价 · 客人告辞", _roll_text(roll) + " 唯一一次还价已用，今天不能再出售这件货。", item)
             state["last_event"]["roll"] = copy.deepcopy(roll)
     elif command == "collect":
         item = _item(state, args[0])
@@ -792,123 +738,63 @@ def _atomic_json(path, data):
 def _validate_trades(state):
     def fail():
         raise GameError("存档掷骰或还价记录损坏；请保留原文件，未重新掷骰。")
-    def integer(value, low, high):
-        return type(value) is int and low <= value <= high
-    def modifiers_valid(modifiers, total, scale):
-        return (isinstance(modifiers, list) and len(modifiers) <= 7
-                and all(isinstance(m, dict) and set(m) == {"label", "value"} and isinstance(m["label"], str)
-                        and integer(m["value"], -2 * scale, 3 * scale) and m["value"] % scale == 0 for m in modifiers)
-                and type(total) is int and total == sum(m["value"] for m in modifiers))
     if not {"engine_upgrade", "negotiation", "roll_seq", "roll_history"} <= set(state):
+        fail()
+    upgrade = state.get("engine_upgrade")
+    if upgrade is not None and (not isinstance(upgrade, dict) or set(upgrade) != {"from_version", "source_day", "source_phase"}
+            or upgrade["from_version"] != 2 or type(upgrade["source_day"]) is not int
+            or not 1 <= upgrade["source_day"] <= state["day"] or upgrade["source_phase"] not in {"active", "week_summary", "lost"}):
         fail()
     sequence, history = state.get("roll_seq"), state.get("roll_history")
     if type(sequence) is not int or sequence < 0 or not isinstance(history, list) or len(history) != min(sequence, 60):
         fail()
-    imported_boundary, v3_boundary = 0, 0
-    upgrade = state["engine_upgrade"]
-    if upgrade is not None:
-        if not isinstance(upgrade, dict) or type(upgrade.get("from_version")) is not int or upgrade["from_version"] not in {2, 3, 4}:
-            fail()
-        expected = {"from_version", "source_day", "source_phase"}
-        if upgrade["from_version"] >= 3:
-            expected |= {"source_roll_seq", "legacy_v3_roll_seq"}
-        if (set(upgrade) != expected or not integer(upgrade["source_day"], 1, state["day"])
-                or upgrade["source_phase"] not in {"active", "week_summary", "lost"}):
-            fail()
-        if upgrade["from_version"] >= 3:
-            imported_boundary, v3_boundary = upgrade["source_roll_seq"], upgrade["legacy_v3_roll_seq"]
-            if (not integer(imported_boundary, 0, sequence) or not integer(v3_boundary, 0, imported_boundary)
-                    or upgrade["from_version"] == 3 and v3_boundary != imported_boundary):
-                fail()
-    common = {"id", "day", "item_id", "item_name", "customer_id", "customer_name", "stage", "modifier", "modifiers",
-              "success", "outcome", "price", "explanation", "rules_version", "counter_offer"}
-    old_keys = common | {"face", "total", "target", "base_target", "rejection_penalty"}
-    new_keys = common | {"die", "tens", "ones", "roll", "threshold", "probability", "base_chance", "premium"}
+    keys = {"id", "day", "item_id", "item_name", "customer_id", "customer_name", "stage", "face", "modifier", "modifiers", "total", "target", "success", "outcome", "price", "explanation"}
+    def modifiers_valid(modifiers, total):
+        return (isinstance(modifiers, list) and len(modifiers) <= 7
+                and all(isinstance(m, dict) and set(m) == {"label", "value"} and isinstance(m["label"], str)
+                        and type(m["value"]) is int and -2 <= m["value"] <= 3 for m in modifiers)
+                and type(total) is int and total == sum(m["value"] for m in modifiers))
     seen = {}
     for index, row in enumerate(history):
-        expected_id = sequence - len(history) + index + 1
-        version = 3 if expected_id <= v3_boundary else 4 if expected_id <= imported_boundary else VERSION
-        if (not isinstance(row, dict) or set(row) != (new_keys if version == VERSION else old_keys)
-                or type(row["rules_version"]) is not int or row["rules_version"] != version
-                or not integer(row["id"], expected_id, expected_id) or not integer(row["day"], 1, state["day"])
-                or not integer(row["price"], 1, 9999)
-                or not all(isinstance(row[k], str) for k in ["item_id", "item_name", "customer_name", "explanation"])
+        if not isinstance(row, dict) or set(row) != keys:
+            fail()
+        for key, low, high in [("id", sequence - len(history) + index + 1, sequence - len(history) + index + 1),
+                               ("day", 1, state["day"]), ("face", 1, 20), ("target", 2, 99), ("price", 1, 9999)]:
+            if type(row[key]) is not int or not low <= row[key] <= high:
+                fail()
+        if (not all(isinstance(row[key], str) for key in ["item_id", "item_name", "customer_name", "explanation"])
                 or row["customer_id"] not in {None} | {p[0] for p in CUSTOMERS}
-                or row["stage"] not in {"initial", "final"}
-                or not modifiers_valid(row["modifiers"], row["modifier"], 5 if version == VERSION else 1)
+                or row["stage"] not in {"initial", "final"} or not modifiers_valid(row["modifiers"], row["modifier"])
+                or type(row["total"]) is not int or row["total"] != row["face"] + row["modifier"]
                 or type(row["success"]) is not bool):
             fail()
-        if version == VERSION:
-            if (row["die"] != "D100" or not integer(row["tens"], 0, 90) or row["tens"] % 10
-                    or not integer(row["ones"], 0, 9) or not integer(row["roll"], 1, 100)
-                    or row["roll"] != (row["tens"] + row["ones"] or 100)
-                    or not integer(row["threshold"], 1, 99)
-                    or type(row["probability"]) not in (int, float) or row["probability"] != row["threshold"] / 100):
-                fail()
-            if row["stage"] == "final":
-                if not integer(row["counter_offer"], 1, row["price"] - 1):
-                    fail()
-                base, threshold = _final_chance(row["modifier"], row["counter_offer"], row["price"])
-                if (not integer(row["base_chance"], 1, 99) or row["base_chance"] != base or row["threshold"] != threshold
-                        or type(row["premium"]) not in (int, float)
-                        or row["premium"] != (row["price"] - row["counter_offer"]) / row["counter_offer"]):
-                    fail()
-            elif row["counter_offer"] is not None or row["base_chance"] is not None or row["premium"] is not None:
-                fail()
-            success = row["roll"] == 1 or (row["roll"] != 100 and row["roll"] <= row["threshold"])
-            outcome = "miracle" if row["roll"] == 1 else "fumble" if row["roll"] == 100 else "success" if success else "failure"
-        else:
-            penalty = 3 if version == 4 and row["stage"] == "final" else 0
-            if (not integer(row["face"], 1, 20) or type(row["total"]) is not int or row["total"] != row["face"] + row["modifier"]
-                    or not integer(row["base_target"], 2, 99) or type(row["rejection_penalty"]) is not int
-                    or row["rejection_penalty"] != penalty or not integer(row["target"], 2, 102)
-                    or row["target"] != row["base_target"] + penalty):
-                fail()
-            if version == 4 and row["stage"] == "final":
-                if not integer(row["counter_offer"], 1, row["price"] - 1):
-                    fail()
-            elif row["counter_offer"] is not None:
-                fail()
-            success = row["face"] == 20 or (row["face"] != 1 and row["total"] >= row["target"])
-            outcome = "miracle" if row["face"] == 20 else "fumble" if row["face"] == 1 else "success" if success else "failure"
+        success = row["face"] == 20 or (row["face"] != 1 and row["total"] >= row["target"])
+        outcome = "miracle" if row["face"] == 20 else "fumble" if row["face"] == 1 else "success" if success else "failure"
         if row["success"] != success or row["outcome"] != outcome:
             fail()
         pair = (row["day"], row["item_id"])
         if pair in seen:
             previous = seen[pair]
-            previous_modifiers = copy.deepcopy(previous["modifiers"])
-            previous_modifier = previous["modifier"]
-            if version == VERSION and previous["rules_version"] != VERSION:
-                previous_modifier *= 5
-                for bonus in previous_modifiers:
-                    bonus["value"] *= 5
             if (row["stage"] != "final" or previous["stage"] != "initial" or previous["outcome"] != "failure"
-                    or any(row[k] != previous[k] for k in ("customer_id", "customer_name", "item_name"))
-                    or row["modifier"] != previous_modifier or row["modifiers"] != previous_modifiers
-                    or row["price"] > previous["price"] or version >= 4 and row["price"] >= previous["price"]):
+                    or any(row[k] != previous[k] for k in ("customer_id", "customer_name", "item_name", "modifiers", "modifier"))
+                    or row["price"] > previous["price"]):
                 fail()
         elif row["stage"] == "final" and not (index == 0 and sequence > 60):
             fail()
         seen[pair] = row
-    event_roll = state["last_event"].get("roll")
-    if event_roll is not None and (not history or event_roll != history[-1]):
-        fail()
     negotiating = [v for v in state["visitors"] if v["status"] == "negotiating"]
-    pending = state["negotiation"]
+    pending = state.get("negotiation")
     if pending is None:
         if negotiating:
             fail()
         return
-    pkeys = {"item_id", "item_name", "customer_id", "customer_name", "original_price", "counter_offer", "day", "context", "initial_roll_id", "rules_version", "origin_rules_version"}
-    if (not isinstance(pending, dict) or set(pending) != pkeys or state["phase"] != "active"
-            or not integer(pending["day"], state["day"], state["day"])
-            or not integer(pending["rules_version"], VERSION, VERSION)
-            or not integer(pending["origin_rules_version"], 3, VERSION)):
+    pkeys = {"item_id", "item_name", "customer_id", "customer_name", "original_price", "counter_offer", "day", "context", "initial_roll_id"}
+    if not isinstance(pending, dict) or set(pending) != pkeys or state["phase"] != "active" or pending["day"] != state["day"]:
         fail()
     item = next((i for i in state["inventory"] if i["id"] == pending["item_id"]), None)
     if (item is None or item["last_sale_day"] != state["day"] or pending["item_name"] != item["name"]
-            or not integer(pending["original_price"], 1, 9999) or pending["original_price"] != item["price"]
-            or not integer(pending["counter_offer"], 1, item["price"])):
+            or type(pending["original_price"]) is not int or pending["original_price"] != item["price"]
+            or type(pending["counter_offer"]) is not int or not 1 <= pending["counter_offer"] <= item["price"]):
         fail()
     visitor = next((v for v in state["visitors"] if v["id"] == pending["customer_id"]), None)
     if (pending["customer_id"] is not None and (visitor is None or negotiating != [visitor])
@@ -918,37 +804,23 @@ def _validate_trades(state):
     context = pending["context"]
     if (not isinstance(context, dict) or set(context) != {"reference", "budget", "modifiers", "modifier"}
             or type(context["reference"]) not in (int, float) or not math.isfinite(context["reference"]) or context["reference"] <= 0
-            or not modifiers_valid(context["modifiers"], context["modifier"], 5)
+            or not modifiers_valid(context["modifiers"], context["modifier"])
             or context["budget"] != (visitor["budget"] if visitor else None)):
         fail()
-    if (not history or not integer(pending["initial_roll_id"], history[-1]["id"], history[-1]["id"])
+    if (not history or history[-1]["id"] != pending["initial_roll_id"] or history[-1]["item_id"] != item["id"]
             or history[-1]["stage"] != "initial" or history[-1]["outcome"] != "failure"
-            or history[-1]["rules_version"] != pending["origin_rules_version"]
             or any(history[-1][key] != pending[key] for key in ("day", "item_id", "item_name", "customer_id", "customer_name"))
             or history[-1]["price"] != pending["original_price"]
-            or context["reference"] != _actual_value(state, item)):
+            or history[-1]["modifier"] != context["modifier"] or history[-1]["modifiers"] != context["modifiers"]
+            or history[-1]["target"] != _trade_target(context, pending["original_price"])
+            or context["reference"] != _actual_value(state, item)
+            or pending["counter_offer"] != _counter_offer(context, pending["original_price"])):
         fail()
-    row = history[-1]
-    if row["rules_version"] == VERSION:
-        if (row["modifier"] != context["modifier"] or row["modifiers"] != context["modifiers"]
-                or row["threshold"] != _initial_chance(context, pending["original_price"])
-                or pending["counter_offer"] != _counter_offer(context, pending["original_price"])):
-            fail()
-    else:
-        import _legacy_v4
-        old_context = copy.deepcopy(context)
-        old_context["modifier"] //= 5
-        for bonus in old_context["modifiers"]:
-            bonus["value"] //= 5
-        if (row["modifier"] != old_context["modifier"] or row["modifiers"] != old_context["modifiers"]
-                or row["target"] != _legacy_v4._trade_target(old_context, pending["original_price"])
-                or pending["counter_offer"] != _legacy_v4._counter_offer(old_context, pending["original_price"])):
-            fail()
 
 def _validate_state(state):
     """Detect damaged/incompatible saves without silently resetting or rerolling."""
     if not isinstance(state, dict) or state.get("version") != VERSION:
-        raise GameError("不兼容或损坏的存档；请保留原文件。v1/v2/v3/v4存档需用 import-v1/import-v2/import-v3/import-v4 复制至全新路径。")
+        raise GameError("不兼容或损坏的存档；请保留原文件。v1/v2存档需用 import-v1/import-v2 复制至全新路径。")
     integers = {"revision": (0, 10**12), "day": (1, 10**12), "credits": (0, 10**12),
                 "energy": (0, 17), "reputation": (0, 99), "next_crate": (1, 10**12),
                 "next_item": (1, 10**12), "event_seq": (1, 10**12)}
@@ -1106,51 +978,6 @@ def migrate_v2(source_bytes):
     return state
 
 
-def _upgrade_d20_copy(original, source_version):
-    """Keep original dice and quote, explicitly switch the future retry to v5."""
-    state = copy.deepcopy(original)
-    state["version"] = VERSION
-    state["daily_event"] = copy.deepcopy(next(e for e in EVENTS if e["id"] == original["daily_event"]["id"]))
-    prior_upgrade = original.get("engine_upgrade") or {}
-    v3_boundary = (original["roll_seq"] if source_version == 3 else
-                   prior_upgrade.get("source_roll_seq", 0) if prior_upgrade.get("from_version") == 3 else 0)
-    state["engine_upgrade"] = {"from_version": source_version, "source_day": original["day"],
-        "source_phase": original["phase"], "source_roll_seq": original["roll_seq"], "legacy_v3_roll_seq": v3_boundary}
-    if source_version == 3:
-        for row in state["roll_history"]:
-            row.update(base_target=row["target"], rejection_penalty=0, rules_version=3, counter_offer=None)
-    if state["negotiation"]:
-        pending = state["negotiation"]
-        pending.update(rules_version=VERSION, origin_rules_version=state["roll_history"][-1]["rules_version"])
-        pending["context"]["modifier"] *= 5
-        for bonus in pending["context"]["modifiers"]:
-            bonus["value"] *= 5
-    _event(state, "import", "双D10来到柜台",
-           f"v{source_version}进度只读复制到新路径；历史D20保留原规则，不重判、不推进随机数或日期。"
-           "已承诺还价保留，可免费接受/谢绝；尚未使用的最终报价明确改用v5百分骰与涨幅成功率，旧加值每点转为5百分点。")
-    return state
-
-
-def migrate_v3(source_bytes):
-    import _legacy_v3
-    try:
-        original = json.loads(source_bytes)
-        _legacy_v3._validate_state(original)
-    except (ValueError, TypeError, KeyError, IndexError, OverflowError, _legacy_v3.GameError) as exc:
-        raise GameError("v3存档无法验证；原文件未改动，请提供完整私有存档。") from exc
-    return _upgrade_d20_copy(original, 3)
-
-
-def migrate_v4(source_bytes):
-    import _legacy_v4
-    try:
-        original = json.loads(source_bytes)
-        _legacy_v4._validate_state(original)
-    except (ValueError, TypeError, KeyError, IndexError, OverflowError, _legacy_v4.GameError) as exc:
-        raise GameError("v4存档无法验证；原文件未改动，请提供完整私有存档。") from exc
-    return _upgrade_d20_copy(original, 4)
-
-
 class GameStore:
     def __init__(self, save_path=DEFAULT_SAVE):
         self.save_path = Path(save_path).expanduser().resolve()
@@ -1188,7 +1015,7 @@ class GameStore:
         """Return only public data. Failed commands never change the save or RNG."""
         arity = {"new": 0, "status": 0, "market": 0, "buy": 1, "open": 1, "inspect": 1,
                  "repair": 1, "price": 2, "sell": (1, 2), "endday": 0, "upgrade": 1, "collect": 1, "restart": 1,
-                 "continue": 0, "codex": 0, "visitors": 0, "import-v1": 1, "import-v2": 1, "import-v3": 1, "import-v4": 1, "preview-offer": 2,
+                 "continue": 0, "codex": 0, "visitors": 0, "import-v1": 1, "import-v2": 1,
                  "accept": 1, "decline": 1, "offer": 2}
         if command not in arity:
             raise GameError(f"未知命令：{command}；运行 help 查看用法。")
@@ -1200,13 +1027,13 @@ class GameStore:
                 if self.save_path.exists():
                     raise GameError("已有存档，new 不会重抽；继续 status，或明确 restart --confirm。")
                 state = new_state()
-            elif command in {"import-v1", "import-v2", "import-v3", "import-v4"}:
+            elif command in {"import-v1", "import-v2"}:
                 source = Path(args[0]).expanduser().resolve()
                 if source in {self.save_path, self.observation_path}:
                     raise GameError("导入目标必须是新的路径，不能原地覆盖旧版存档。请使用 --save 新路径。")
                 if self.save_path.exists() or self.observation_path.exists():
                     raise GameError("目标存档或公开画面已存在；导入不会覆盖，请选全新 --save 路径。")
-                state = {"import-v1": migrate_v1, "import-v2": migrate_v2, "import-v3": migrate_v3, "import-v4": migrate_v4}[command](source.read_bytes())
+                state = (migrate_v1 if command == "import-v1" else migrate_v2)(source.read_bytes())
             elif command == "restart":
                 if args != ("--confirm",):
                     raise GameError("重新开始会清空本局；确定后使用 restart --confirm。")
@@ -1221,16 +1048,10 @@ class GameStore:
                 state["revision"] = previous_revision
             else:
                 state = self.load()
-                if command in {"status", "market", "inspect", "codex", "visitors", "preview-offer"}:
+                if command in {"status", "market", "inspect", "codex", "visitors"}:
                     public = observation(state)
                     result = public
-                    if command == "preview-offer":
-                        pending = state["negotiation"]
-                        if pending is None or pending["item_id"] != args[0].upper():
-                            raise GameError("这件货没有等待答复的还价；用 status 查看。")
-                        price = _final_price(pending, args[1])
-                        public["negotiation"]["preview"] = dict(_offer_forecast(state, pending, price), suggested=False)
-                    elif command == "market":
+                    if command == "market":
                         result = {k: public[k] for k in ["revision", "day", "credits", "energy", "demand", "suppliers", "daily_event", "visitors", "operating_cost"]}
                     elif command in {"codex", "visitors"}:
                         result = public[command] if command == "codex" else {"day": public["day"], "visitors": public["visitors"]}

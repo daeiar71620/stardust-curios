@@ -13,7 +13,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import engine
+import _legacy_v4 as engine
 import _legacy_v2
 
 
@@ -99,11 +99,12 @@ class DiceTransactionAudit(unittest.TestCase):
             with self.subTest(final=final):
                 before = self.prepare(faces=(10, 19) if final else (19,), price=9999 if final else 1)
                 public = self.sell()
+                price = public["negotiation"]["counter_offer"] + 1 if final else 1
                 if final:
-                    public = self.store.execute("offer", "I001", "1")
+                    public = self.store.execute("offer", "I001", str(price))
                 self.assertEqual(public["last_roll"]["outcome"], "success")
-                self.assertEqual(public["credits"], before["credits"] + 1)
-                self.assertEqual(public["stats"]["gross_earnings"], 1)
+                self.assertEqual(public["credits"], before["credits"] + price)
+                self.assertEqual(public["stats"]["gross_earnings"], price)
                 self.assertEqual(public["stats"]["sales_count"], 1)
                 self.assertEqual(public["energy"], before["energy"] - (2 if final else 1))
                 self.assertIsNone(public["negotiation"])
@@ -197,24 +198,24 @@ class DiceTransactionAudit(unittest.TestCase):
         self.reject_unchanged("offer", "I001", "1", store=reopened)
         self.reject_unchanged("sell", "I002", self.customer, store=reopened)
 
-    def test_final_natural_twenty_can_settle_original_9999(self):
+    def test_final_natural_twenty_can_settle_lower_9998(self):
         before = self.prepare(faces=(10, 20))
         self.sell()
-        public = self.store.execute("offer", "I001", "9999")
-        self.assertEqual(public["credits"], before["credits"] + 9999)
+        public = self.store.execute("offer", "I001", "9998")
+        self.assertEqual(public["credits"], before["credits"] + 9998)
         self.assertEqual(public["energy"], before["energy"] - 2)
         self.assertEqual(public["last_roll"]["stage"], "final")
         self.assertEqual(public["last_roll"]["outcome"], "miracle")
         self.assertEqual(len(public["roll_history"]), 2)
         self.assertIsNone(public["negotiation"])
-        self.reject_unchanged("offer", "I001", "9999")
+        self.reject_unchanged("offer", "I001", "9998")
 
     def test_final_failures_never_create_third_roll_or_second_counter(self):
         for face in (1, 2, 10, 19):
             with self.subTest(face=face):
                 before = self.prepare(faces=(10, face))
                 self.sell()
-                public = self.store.execute("offer", "I001", "9999")
+                public = self.store.execute("offer", "I001", "9998")
                 self.assertEqual(public["last_roll"]["face"], face)
                 self.assertFalse(public["last_roll"]["success"])
                 self.assertEqual(public["credits"], before["credits"])
@@ -240,14 +241,14 @@ class DiceTransactionAudit(unittest.TestCase):
             self.assertEqual(self.store.execute("status")["negotiation"], pending)
             self.assertEqual(self.store.save_path.read_bytes(), blob)
             self.reject_unchanged("sell", "I001", self.customer)
-        actual = self.store.execute("offer", "I001", "9999")
-        expected = twin.execute("offer", "I001", "9999")
+        actual = self.store.execute("offer", "I001", "9998")
+        expected = twin.execute("offer", "I001", "9998")
         self.assertEqual(actual, expected)
         self.assertEqual(self.store.load(), twin.load())
 
     def test_invalid_offers_and_arity_leave_files_and_rng_byte_identical(self):
         self.sell()
-        for amount in ("0", "-1", "10000", "01", "+1", "1.0", "NaN", "", "1e2", "９"):
+        for amount in ("1", "9999", str(self.store.load()["negotiation"]["counter_offer"]), "0", "-1", "10000", "01", "+1", "1.0", "NaN", "", "1e2", "９"):
             with self.subTest(amount=amount):
                 self.reject_unchanged("offer", "I001", amount)
         for cmd, args in [("offer", ()), ("offer", ("I001",)),
@@ -294,7 +295,7 @@ class DiceTransactionAudit(unittest.TestCase):
         context = copy.deepcopy(before["negotiation"]["context"])
         self.store.execute("upgrade", "display")
         self.assertEqual(self.store.load()["negotiation"]["context"], context)
-        public = self.store.execute("offer", "I001", "9999")
+        public = self.store.execute("offer", "I001", "9998")
         self.assertEqual(public["last_roll"]["modifier"], context["modifier"])
         self.assertEqual(public["last_roll"]["modifiers"], context["modifiers"])
 
@@ -390,7 +391,7 @@ class DiceTransactionAudit(unittest.TestCase):
             state["rng"] = self.rng_for(10, 10)
             engine.apply_command(state, "sell", ["I001"])
             if day < 31:
-                engine.apply_command(state, "offer", ["I001", "9999"])
+                engine.apply_command(state, "offer", ["I001", str(state["inventory"][0]["price"] - 1)])
         self.assertEqual(state["roll_seq"], 61)
         self.assertEqual(len(state["roll_history"]), 60)
         self.assertEqual(state["roll_history"][0]["stage"], "final")

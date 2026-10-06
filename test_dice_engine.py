@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-import engine
+import _legacy_v4 as engine
 import _legacy_v2
 
 
@@ -183,23 +183,23 @@ class DiceEngineTests(unittest.TestCase):
         self.reject("sell", "I001")
         self.reject("offer", "I001", "1")
 
-    def test_final_twenty_sells_full_9999_and_only_one_more_roll(self):
+    def test_final_twenty_sells_lower_9998_and_only_one_more_roll(self):
         before = self.pending(10, 20)
-        obs = engine.GameStore(self.path).execute("offer", "I001", "9999")
-        self.assertEqual(obs["credits"], before["credits"] + 9999)
+        obs = engine.GameStore(self.path).execute("offer", "I001", "9998")
+        self.assertEqual(obs["credits"], before["credits"] + 9998)
         self.assertEqual(obs["energy"], before["energy"] - 1)
         self.assertEqual(obs["last_roll"]["stage"], "final")
         self.assertEqual(obs["last_roll"]["outcome"], "miracle")
         self.assertEqual(len(obs["roll_history"]), 2)
         self.assertIsNone(obs["negotiation"])
-        self.reject("offer", "I001", "9999")
+        self.reject("offer", "I001", "9998")
         self.reject("accept", "I001")
 
     def test_final_failure_and_fumble_close_without_reopening(self):
         for second in (1, 10, 19):
             with self.subTest(second=second):
                 self.pending(10, second)
-                obs = self.store.execute("offer", "I001", "9999")
+                obs = self.store.execute("offer", "I001", "9998")
                 self.assertFalse(obs["last_roll"]["success"])
                 self.assertIsNone(obs["negotiation"])
                 self.assertEqual(len(obs["roll_history"]), 2)
@@ -210,18 +210,18 @@ class DiceEngineTests(unittest.TestCase):
 
     def test_final_lower_price_can_succeed_normally(self):
         self.pending(10, 19, named=False)
-        obs = self.store.execute("offer", "I001", "40")
+        obs = self.store.execute("offer", "I001", "80")
         self.assertTrue(obs["last_roll"]["success"])
         self.assertEqual(obs["last_roll"]["outcome"], "success")
-        self.assertEqual(obs["credits"], 300)
-        self.assertEqual(obs["last_roll"]["price"], 40)
+        self.assertEqual(obs["credits"], 340)
+        self.assertEqual(obs["last_roll"]["price"], 80)
 
     def test_illegal_final_prices_and_zero_energy_never_consume_rng(self):
         self.pending()
-        for bad in ("0", "-1", "10000", "1.0", "01", "nan", "", "一百"):
+        for bad in ("1", "9999", str(self.store.load()["negotiation"]["counter_offer"]), "0", "-1", "10000", "1.0", "01", "nan", "", "一百"):
             self.reject("offer", "I001", bad)
         state = self.store.load(); state["energy"] = 0; self.write(state)
-        self.reject("offer", "I001", "9999")
+        self.reject("offer", "I001", "9998")
         self.store.execute("decline", "I001")
 
     def test_final_target_uses_frozen_context_despite_upgrade(self):
@@ -230,9 +230,9 @@ class DiceEngineTests(unittest.TestCase):
         original = copy.deepcopy(state["negotiation"]["context"])
         self.store.execute("upgrade", "display")
         self.assertEqual(original, self.store.load()["negotiation"]["context"])
-        obs = self.store.execute("offer", "I001", "9999")
+        obs = self.store.execute("offer", "I001", "9998")
         self.assertEqual(obs["last_roll"]["modifier"], 0)
-        self.assertEqual(obs["last_roll"]["target"], engine._trade_target(original, 9999))
+        self.assertEqual(obs["last_roll"]["target"], engine._trade_target(original, 9998) + 3)
 
     def test_endday_declines_pending_and_next_day_unlocks(self):
         self.pending()
@@ -269,7 +269,7 @@ class DiceEngineTests(unittest.TestCase):
             elif isinstance(value, list):
                 for nested in value: walk(nested)
         walk(obs)
-        walk(self.store.execute("offer", "I001", "9999"))
+        walk(self.store.execute("offer", "I001", "9998"))
 
     def test_final_save_failure_rolls_back_everything_and_retry_same_result(self):
         self.pending(10, 20)
@@ -279,9 +279,9 @@ class DiceEngineTests(unittest.TestCase):
             if Path(path) == self.path: raise OSError("synthetic precommit failure")
             return original(path, data)
         with mock.patch.object(engine, "_atomic_json", side_effect=fail):
-            with self.assertRaises(OSError): self.store.execute("offer", "I001", "9999")
+            with self.assertRaises(OSError): self.store.execute("offer", "I001", "9998")
         self.assertEqual(before, (self.path.read_bytes(), self.store.observation_path.read_bytes()))
-        obs = self.store.execute("offer", "I001", "9999")
+        obs = self.store.execute("offer", "I001", "9998")
         self.assertEqual(obs["last_roll"]["face"], 20)
         self.assertEqual(obs["stats"]["sales_count"], 1)
 
@@ -292,13 +292,13 @@ class DiceEngineTests(unittest.TestCase):
             if Path(path) == self.store.observation_path: raise OSError("synthetic projection failure")
             return original(path, data)
         with mock.patch.object(engine, "_atomic_json", side_effect=fail):
-            obs = self.store.execute("offer", "I001", "9999")
+            obs = self.store.execute("offer", "I001", "9998")
         self.assertIn("persistence_warning", obs)
         fixed = self.store.execute("status")
         self.assertEqual(fixed["last_roll"]["face"], 20)
         self.assertEqual(fixed["stats"]["sales_count"], 1)
         self.assertEqual(json.loads(self.store.observation_path.read_text()), fixed)
-        self.reject("offer", "I001", "9999")
+        self.reject("offer", "I001", "9998")
 
     def test_corrupt_dice_and_pending_refused_without_repair_or_reroll(self):
         self.pending()
@@ -320,16 +320,16 @@ class DiceEngineTests(unittest.TestCase):
 
     def test_cross_process_two_final_offers_only_commit_one(self):
         before = self.pending(10, 20)
-        cmd = [sys.executable, str(Path(engine.__file__)), "--save", str(self.path), "offer", "I001", "9999"]
+        cmd = [sys.executable, str(Path(engine.__file__)), "--save", str(self.path), "offer", "I001", "9998"]
         jobs = [subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for _ in range(2)]
         results = [job.communicate(timeout=10) for job in jobs]
         self.assertEqual(sorted(job.returncode for job in jobs), [0, 2], results)
         obs = self.store.execute("status")
         self.assertEqual(obs["revision"], before["revision"] + 1)
         self.assertEqual(len(obs["roll_history"]), 2)
-        self.assertEqual(obs["stats"]["gross_earnings"], 9999)
+        self.assertEqual(obs["stats"]["gross_earnings"], 9998)
 
-    def test_9999_two_roll_miracle_probability_exactly_9_point_5_percent(self):
+    def test_lowered_high_price_two_roll_miracle_probability_exactly_9_point_5_percent(self):
         successes = 0
         total_rolls = 0
         for first in range(1, 21):
@@ -341,7 +341,7 @@ class DiceEngineTests(unittest.TestCase):
                 with mock.patch.object(engine, "_rng", return_value=rng):
                     engine.apply_command(state, "sell", ["I001"])
                     if state["negotiation"]:
-                        engine.apply_command(state, "offer", ["I001", "9999"])
+                        engine.apply_command(state, "offer", ["I001", str(state["inventory"][0]["price"] - 1)])
                 successes += bool(state["stats"]["sales_count"])
                 total_rolls += len(state["roll_history"])
         self.assertEqual(successes, 38)

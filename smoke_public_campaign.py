@@ -40,4 +40,4 @@ for seed in range(30):
    break
   obs=act('endday')
  results.append((obs['day'],obs['phase'],obs['credits'],counts))
-print({'synthetic_games':len(results),'reached_day_41':sum(r[0]==41 for r in results),'lost':sum(r[1]=='lost' for r in results),'cash_min':min(r[2] for r in results),'cash_max':max(r[2] for r in results),'cash_median':statistics.median(r[2] for r in results),'rolls':sum(r[3]['rolls'] for r in results),'natural20':sum(r[3]['miracles'] for r in results),'natural1':sum(r[3]['fumbles'] for r in results),'negotiations_accepted':sum(r[3]['negotiations'] for r in results)})
+print({'synthetic_games':len(results),'reached_day_41':sum(r[0]==41 for r in results),'lost':sum(r[1]=='lost' for r in results),'cash_min':min(r[2] for r in results),'cash_max':max(r[2] for r in results),'cash_median':statistics.median(r[2] for r in results),'rolls':sum(r[3]['rolls'] for r in results),'critical01':sum(r[3]['miracles'] for r in results),'fumble100':sum(r[3]['fumbles'] for r in results),'negotiations_accepted':sum(r[3]['negotiations'] for r in results)})

@@ -3,8 +3,8 @@
   "revision": 2,
   "day": 1,
   "total_days": 7,
-  "credits": 360,
-  "reputation": 1,
+  "credits": 260,
+  "reputation": 0,
   "energy": 10,
   "max_energy": 12,
   "goal": {
@@ -12,7 +12,29 @@
     "collection": 2
   },
   "phase": "active",
-  "inventory": [],
+  "inventory": [
+    {
+      "id": "I001",
+      "name": "折叠离子扳手",
+      "rarity": "common",
+      "kind": "tool",
+      "color": "#8ed4cb",
+      "condition": 80,
+      "value_estimate": [
+        77,
+        114
+      ],
+      "repair_cost": 15,
+      "price": 100,
+      "origin": "废轨回收站",
+      "description": "一把能伸进四维螺孔的扳手。握柄留着某位机修师的名字。",
+      "collected": false,
+      "sale_attempted_today": true,
+      "repair_attempted_today": false,
+      "repairs_remaining": 2,
+      "negotiating": false
+    }
+  ],
   "crates": [],
   "collection": [],
   "suppliers": [
@@ -44,8 +66,8 @@
   "last_event": {
     "seq": 3,
     "type": "sale",
-    "title": "最终报价 · 成交！",
-    "text": "双D10：30 + 5 → 35；掷低点 ≤ 37，成功率37%。百分骰点数不高于成功阈值，正常成交。 基础率70%，还价上浮42.9%，成功阈值37。 旅客买走「折叠离子扳手」，收入100星币，口碑+1。",
+    "title": "最终报价 · 客人告辞",
+    "text": "双D10：00 + 0 → 100；掷低点 ≤ 37，成功率37%。100 · 大失败，客人告辞；今日这件货接待结束。 基础率70%，还价上浮42.9%，成功阈值37。 唯一一次还价已用，本次收入0；不能再接受旧还价，今天不能再出售这件货。",
     "item": {
       "id": "I001",
       "name": "折叠离子扳手",
@@ -76,9 +98,9 @@
       "customer_name": "旅客",
       "stage": "final",
       "die": "D100",
-      "tens": 30,
-      "ones": 5,
-      "roll": 35,
+      "tens": 0,
+      "ones": 0,
+      "roll": 100,
       "modifier": 0,
       "modifiers": [],
       "threshold": 37,
@@ -87,10 +109,10 @@
       "premium": 0.42857142857142855,
       "rules_version": 5,
       "counter_offer": 70,
-      "success": true,
-      "outcome": "success",
+      "success": false,
+      "outcome": "fumble",
       "price": 100,
-      "explanation": "百分骰点数不高于成功阈值，正常成交。 基础率70%，还价上浮42.9%，成功阈值37。"
+      "explanation": "100 · 大失败，客人告辞；今日这件货接待结束。 基础率70%，还价上浮42.9%，成功阈值37。"
     }
   },
   "log": [
@@ -104,7 +126,7 @@
     },
     {
       "day": 1,
-      "text": "双D10：30 + 5 → 35；掷低点 ≤ 37，成功率37%。百分骰点数不高于成功阈值，正常成交。 基础率70%，还价上浮42.9%，成功阈值37。 旅客买走「折叠离子扳手」，收入100星币，口碑+1。"
+      "text": "双D10：00 + 0 → 100；掷低点 ≤ 37，成功率37%。100 · 大失败，客人告辞；今日这件货接待结束。 基础率70%，还价上浮42.9%，成功阈值37。 唯一一次还价已用，本次收入0；不能再接受旧还价，今天不能再出售这件货。"
     }
   ],
   "capacity": 7,
@@ -156,7 +178,7 @@
         {
           "key": "credits",
           "label": "现金",
-          "current": 360,
+          "current": 260,
           "target": 650,
           "met": false
         },
@@ -479,8 +501,8 @@
   ],
   "stats": {
     "crates_opened": 0,
-    "sales_count": 1,
-    "gross_earnings": 100,
+    "sales_count": 0,
+    "gross_earnings": 0,
     "days_traded": 0
   },
   "migration": null,
@@ -495,9 +517,9 @@
     "customer_name": "旅客",
     "stage": "final",
     "die": "D100",
-    "tens": 30,
-    "ones": 5,
-    "roll": 35,
+    "tens": 0,
+    "ones": 0,
+    "roll": 100,
     "modifier": 0,
     "modifiers": [],
     "threshold": 37,
@@ -506,10 +528,10 @@
     "premium": 0.42857142857142855,
     "rules_version": 5,
     "counter_offer": 70,
-    "success": true,
-    "outcome": "success",
+    "success": false,
+    "outcome": "fumble",
     "price": 100,
-    "explanation": "百分骰点数不高于成功阈值，正常成交。 基础率70%，还价上浮42.9%，成功阈值37。"
+    "explanation": "100 · 大失败，客人告辞；今日这件货接待结束。 基础率70%，还价上浮42.9%，成功阈值37。"
   },
   "roll_history": [
     {
@@ -546,9 +568,9 @@
       "customer_name": "旅客",
       "stage": "final",
       "die": "D100",
-      "tens": 30,
-      "ones": 5,
-      "roll": 35,
+      "tens": 0,
+      "ones": 0,
+      "roll": 100,
       "modifier": 0,
       "modifiers": [],
       "threshold": 37,
@@ -557,10 +579,10 @@
       "premium": 0.42857142857142855,
       "rules_version": 5,
       "counter_offer": 70,
-      "success": true,
-      "outcome": "success",
+      "success": false,
+      "outcome": "fumble",
       "price": 100,
-      "explanation": "百分骰点数不高于成功阈值，正常成交。 基础率70%，还价上浮42.9%，成功阈值37。"
+      "explanation": "100 · 大失败，客人告辞；今日这件货接待结束。 基础率70%，还价上浮42.9%，成功阈值37。"
     }
   ],
   "trade_rules": {

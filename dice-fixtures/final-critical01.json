@@ -1,11 +1,11 @@
 {
-  "version": 3,
-  "revision": 1,
+  "version": 5,
+  "revision": 2,
   "day": 1,
   "total_days": 7,
-  "credits": 10259,
+  "credits": 10258,
   "reputation": 1,
-  "energy": 11,
+  "energy": 10,
   "max_energy": 12,
   "goal": {
     "credits": 650,
@@ -42,10 +42,10 @@
     "multiplier": 1.25
   },
   "last_event": {
-    "seq": 2,
+    "seq": 3,
     "type": "sale",
-    "title": "一见钟情 · 天然20！",
-    "text": "D20掷出20，加值-1，合计19 / 目标79。天然20 · 一见钟情！幸运奇迹突破普通意愿与预算，按本次报价成交。 这次报价只有天然20能成交。 回声买走「折叠离子扳手」，收入9999星币，口碑+1。",
+    "title": "最终报价 · 01大成功！",
+    "text": "双D10：00 + 1 → 01；掷低点 ≤ 1，成功率1%。01 · 一见钟情！大成功突破普通意愿与预算，按本次合法报价成交。 基础率65%，还价上浮16563.3%，成功阈值1。 这次报价只有01能成交，成功率1%。 回声买走「折叠离子扳手」，收入9998星币，口碑+1。",
     "item": {
       "id": "I001",
       "name": "折叠离子扳手",
@@ -58,7 +58,7 @@
         114
       ],
       "repair_cost": 15,
-      "price": 9999,
+      "price": 9998,
       "origin": "废轨回收站",
       "description": "一把能伸进四维螺孔的扳手。握柄留着某位机修师的名字。",
       "collected": false,
@@ -68,31 +68,38 @@
       "negotiating": false
     },
     "roll": {
-      "id": 1,
+      "id": 2,
       "day": 1,
       "item_id": "I001",
       "item_name": "折叠离子扳手",
       "customer_id": "echo",
       "customer_name": "回声",
-      "stage": "initial",
-      "face": 20,
-      "modifier": -1,
+      "stage": "final",
+      "die": "D100",
+      "tens": 0,
+      "ones": 1,
+      "roll": 1,
+      "modifier": -5,
       "modifiers": [
         {
           "label": "偏好不合",
-          "value": -2
+          "value": -10
         },
         {
           "label": "符合品相期待",
-          "value": 1
+          "value": 5
         }
       ],
-      "total": 19,
-      "target": 79,
+      "threshold": 1,
+      "probability": 0.01,
+      "base_chance": 65,
+      "premium": 165.63333333333333,
+      "rules_version": 5,
+      "counter_offer": 60,
       "success": true,
       "outcome": "miracle",
-      "price": 9999,
-      "explanation": "天然20 · 一见钟情！幸运奇迹突破普通意愿与预算，按本次报价成交。 这次报价只有天然20能成交。"
+      "price": 9998,
+      "explanation": "01 · 一见钟情！大成功突破普通意愿与预算，按本次合法报价成交。 基础率65%，还价上浮16563.3%，成功阈值1。 这次报价只有01能成交，成功率1%。"
     }
   },
   "log": [
@@ -102,7 +109,11 @@
     },
     {
       "day": 1,
-      "text": "D20掷出20，加值-1，合计19 / 目标79。天然20 · 一见钟情！幸运奇迹突破普通意愿与预算，按本次报价成交。 这次报价只有天然20能成交。 回声买走「折叠离子扳手」，收入9999星币，口碑+1。"
+      "text": "双D10：50 + 0 → 50；掷低点 ≤ 1，成功率1%。百分骰点数高于成功阈值。 这次报价只有01能成交，成功率1%。 回声愿出60星币。接受免费；最终报价须高于还价、低于初价，花1精力，成功率随相对还价涨幅下降；失败收入0，不能再接受旧还价。可先 preview-offer 预览。"
+    },
+    {
+      "day": 1,
+      "text": "双D10：00 + 1 → 01；掷低点 ≤ 1，成功率1%。01 · 一见钟情！大成功突破普通意愿与预算，按本次合法报价成交。 基础率65%，还价上浮16563.3%，成功阈值1。 这次报价只有01能成交，成功率1%。 回声买走「折叠离子扳手」，收入9998星币，口碑+1。"
     }
   ],
   "capacity": 7,
@@ -138,7 +149,7 @@
       "max_level": 3,
       "next_cost": 120,
       "effect": "朴素展示",
-      "next_effect": "成交检定+1"
+      "next_effect": "成交基础率+5百分点"
     }
   ],
   "campaign": {
@@ -154,7 +165,7 @@
         {
           "key": "credits",
           "label": "现金",
-          "current": 10259,
+          "current": 10258,
           "target": 650,
           "met": true
         },
@@ -441,11 +452,11 @@
     {
       "id": "artifact",
       "name": "小小宇宙馆",
-      "description": "收藏3种奇物，所有成交检定+1",
+      "description": "收藏3种奇物，所有成交基础率+5百分点",
       "required": 3,
       "current": 0,
       "completed": false,
-      "perk": "收藏3种奇物，所有成交检定+1"
+      "perk": "收藏3种奇物，所有成交基础率+5百分点"
     },
     {
       "id": "bot",
@@ -478,38 +489,45 @@
   "stats": {
     "crates_opened": 0,
     "sales_count": 1,
-    "gross_earnings": 9999,
+    "gross_earnings": 9998,
     "days_traded": 0
   },
   "migration": null,
   "engine_upgrade": null,
   "negotiation": null,
   "last_roll": {
-    "id": 1,
+    "id": 2,
     "day": 1,
     "item_id": "I001",
     "item_name": "折叠离子扳手",
     "customer_id": "echo",
     "customer_name": "回声",
-    "stage": "initial",
-    "face": 20,
-    "modifier": -1,
+    "stage": "final",
+    "die": "D100",
+    "tens": 0,
+    "ones": 1,
+    "roll": 1,
+    "modifier": -5,
     "modifiers": [
       {
         "label": "偏好不合",
-        "value": -2
+        "value": -10
       },
       {
         "label": "符合品相期待",
-        "value": 1
+        "value": 5
       }
     ],
-    "total": 19,
-    "target": 79,
+    "threshold": 1,
+    "probability": 0.01,
+    "base_chance": 65,
+    "premium": 165.63333333333333,
+    "rules_version": 5,
+    "counter_offer": 60,
     "success": true,
     "outcome": "miracle",
-    "price": 9999,
-    "explanation": "天然20 · 一见钟情！幸运奇迹突破普通意愿与预算，按本次报价成交。 这次报价只有天然20能成交。"
+    "price": 9998,
+    "explanation": "01 · 一见钟情！大成功突破普通意愿与预算，按本次合法报价成交。 基础率65%，还价上浮16563.3%，成功阈值1。 这次报价只有01能成交，成功率1%。"
   },
   "roll_history": [
     {
@@ -520,34 +538,88 @@
       "customer_id": "echo",
       "customer_name": "回声",
       "stage": "initial",
-      "face": 20,
-      "modifier": -1,
+      "die": "D100",
+      "tens": 50,
+      "ones": 0,
+      "roll": 50,
+      "modifier": -5,
       "modifiers": [
         {
           "label": "偏好不合",
-          "value": -2
+          "value": -10
         },
         {
           "label": "符合品相期待",
-          "value": 1
+          "value": 5
         }
       ],
-      "total": 19,
-      "target": 79,
+      "threshold": 1,
+      "probability": 0.01,
+      "base_chance": null,
+      "premium": null,
+      "rules_version": 5,
+      "counter_offer": null,
+      "success": false,
+      "outcome": "failure",
+      "price": 9999,
+      "explanation": "百分骰点数高于成功阈值。 这次报价只有01能成交，成功率1%。"
+    },
+    {
+      "id": 2,
+      "day": 1,
+      "item_id": "I001",
+      "item_name": "折叠离子扳手",
+      "customer_id": "echo",
+      "customer_name": "回声",
+      "stage": "final",
+      "die": "D100",
+      "tens": 0,
+      "ones": 1,
+      "roll": 1,
+      "modifier": -5,
+      "modifiers": [
+        {
+          "label": "偏好不合",
+          "value": -10
+        },
+        {
+          "label": "符合品相期待",
+          "value": 5
+        }
+      ],
+      "threshold": 1,
+      "probability": 0.01,
+      "base_chance": 65,
+      "premium": 165.63333333333333,
+      "rules_version": 5,
+      "counter_offer": 60,
       "success": true,
       "outcome": "miracle",
-      "price": 9999,
-      "explanation": "天然20 · 一见钟情！幸运奇迹突破普通意愿与预算，按本次报价成交。 这次报价只有天然20能成交。"
+      "price": 9998,
+      "explanation": "01 · 一见钟情！大成功突破普通意愿与预算，按本次合法报价成交。 基础率65%，还价上浮16563.3%，成功阈值1。 这次报价只有01能成交，成功率1%。"
     }
   ],
   "trade_rules": {
-    "die": "D20",
-    "natural_20": "一见钟情，突破普通意愿和预算，按本次合法报价成交",
-    "natural_1": "失手，本日该货接待立即结束",
+    "die": "D100",
+    "dice": [
+      "D10 tens 00–90",
+      "D10 ones 0–9"
+    ],
+    "direction": "roll_low",
+    "zero_zero": 100,
+    "critical": 1,
+    "fumble": 100,
+    "critical_rule": "01一见钟情，突破普通意愿和预算，按合法报价成交",
+    "fumble_rule": "100大失败，本日该货接待立即结束",
+    "house_rules": "CoC启发的简化房规，非官方完整规则",
     "max_rolls_per_item_day": 2,
     "price_limit": 9999,
     "final_offer_energy": 1,
+    "final_offer_rule": "counter_offer < price < original_price",
+    "final_chance_formula": "clamp(1,99,floor(clamp(1,99,70+bonus)*counter/(2*price-counter)))",
+    "initial_chance_formula": "clamp(1,99,floor(60+bonus-50*log2(price/reference))); above hidden budget: 1",
+    "final_budget_rule": "还价已反映预算，最终报价不再施加隐藏预算门槛",
     "endday": "自动谢绝未完成还价",
-    "miracle_probability": 0.05
+    "miracle_probability": 0.01
   }
 }

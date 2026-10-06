@@ -1,9 +1,9 @@
 {
-  "version": 3,
+  "version": 5,
   "revision": 1,
   "day": 1,
   "total_days": 7,
-  "credits": 300,
+  "credits": 340,
   "reputation": 1,
   "energy": 11,
   "max_energy": 12,
@@ -45,7 +45,7 @@
     "seq": 2,
     "type": "sale",
     "title": "掷骰成交！",
-    "text": "D20掷出19，加值+0，合计19 / 目标2。D20 + 加值达到目标，正常成交。 旅客买走「折叠离子扳手」，收入40星币，口碑+1。",
+    "text": "双D10：30 + 5 → 35；掷低点 ≤ 72，成功率72%。百分骰点数不高于成功阈值，正常成交。 旅客买走「折叠离子扳手」，收入80星币，口碑+1。",
     "item": {
       "id": "I001",
       "name": "折叠离子扳手",
@@ -58,7 +58,7 @@
         114
       ],
       "repair_cost": 15,
-      "price": 40,
+      "price": 80,
       "origin": "废轨回收站",
       "description": "一把能伸进四维螺孔的扳手。握柄留着某位机修师的名字。",
       "collected": false,
@@ -75,15 +75,22 @@
       "customer_id": null,
       "customer_name": "旅客",
       "stage": "initial",
-      "face": 19,
+      "die": "D100",
+      "tens": 30,
+      "ones": 5,
+      "roll": 35,
       "modifier": 0,
       "modifiers": [],
-      "total": 19,
-      "target": 2,
+      "threshold": 72,
+      "probability": 0.72,
+      "base_chance": null,
+      "premium": null,
+      "rules_version": 5,
+      "counter_offer": null,
       "success": true,
       "outcome": "success",
-      "price": 40,
-      "explanation": "D20 + 加值达到目标，正常成交。"
+      "price": 80,
+      "explanation": "百分骰点数不高于成功阈值，正常成交。"
     }
   },
   "log": [
@@ -93,7 +100,7 @@
     },
     {
       "day": 1,
-      "text": "D20掷出19，加值+0，合计19 / 目标2。D20 + 加值达到目标，正常成交。 旅客买走「折叠离子扳手」，收入40星币，口碑+1。"
+      "text": "双D10：30 + 5 → 35；掷低点 ≤ 72，成功率72%。百分骰点数不高于成功阈值，正常成交。 旅客买走「折叠离子扳手」，收入80星币，口碑+1。"
     }
   ],
   "capacity": 7,
@@ -129,7 +136,7 @@
       "max_level": 3,
       "next_cost": 120,
       "effect": "朴素展示",
-      "next_effect": "成交检定+1"
+      "next_effect": "成交基础率+5百分点"
     }
   ],
   "campaign": {
@@ -145,7 +152,7 @@
         {
           "key": "credits",
           "label": "现金",
-          "current": 300,
+          "current": 340,
           "target": 650,
           "met": false
         },
@@ -432,11 +439,11 @@
     {
       "id": "artifact",
       "name": "小小宇宙馆",
-      "description": "收藏3种奇物，所有成交检定+1",
+      "description": "收藏3种奇物，所有成交基础率+5百分点",
       "required": 3,
       "current": 0,
       "completed": false,
-      "perk": "收藏3种奇物，所有成交检定+1"
+      "perk": "收藏3种奇物，所有成交基础率+5百分点"
     },
     {
       "id": "bot",
@@ -469,7 +476,7 @@
   "stats": {
     "crates_opened": 0,
     "sales_count": 1,
-    "gross_earnings": 40,
+    "gross_earnings": 80,
     "days_traded": 0
   },
   "migration": null,
@@ -483,15 +490,22 @@
     "customer_id": null,
     "customer_name": "旅客",
     "stage": "initial",
-    "face": 19,
+    "die": "D100",
+    "tens": 30,
+    "ones": 5,
+    "roll": 35,
     "modifier": 0,
     "modifiers": [],
-    "total": 19,
-    "target": 2,
+    "threshold": 72,
+    "probability": 0.72,
+    "base_chance": null,
+    "premium": null,
+    "rules_version": 5,
+    "counter_offer": null,
     "success": true,
     "outcome": "success",
-    "price": 40,
-    "explanation": "D20 + 加值达到目标，正常成交。"
+    "price": 80,
+    "explanation": "百分骰点数不高于成功阈值，正常成交。"
   },
   "roll_history": [
     {
@@ -502,25 +516,45 @@
       "customer_id": null,
       "customer_name": "旅客",
       "stage": "initial",
-      "face": 19,
+      "die": "D100",
+      "tens": 30,
+      "ones": 5,
+      "roll": 35,
       "modifier": 0,
       "modifiers": [],
-      "total": 19,
-      "target": 2,
+      "threshold": 72,
+      "probability": 0.72,
+      "base_chance": null,
+      "premium": null,
+      "rules_version": 5,
+      "counter_offer": null,
       "success": true,
       "outcome": "success",
-      "price": 40,
-      "explanation": "D20 + 加值达到目标，正常成交。"
+      "price": 80,
+      "explanation": "百分骰点数不高于成功阈值，正常成交。"
     }
   ],
   "trade_rules": {
-    "die": "D20",
-    "natural_20": "一见钟情，突破普通意愿和预算，按本次合法报价成交",
-    "natural_1": "失手，本日该货接待立即结束",
+    "die": "D100",
+    "dice": [
+      "D10 tens 00–90",
+      "D10 ones 0–9"
+    ],
+    "direction": "roll_low",
+    "zero_zero": 100,
+    "critical": 1,
+    "fumble": 100,
+    "critical_rule": "01一见钟情，突破普通意愿和预算，按合法报价成交",
+    "fumble_rule": "100大失败，本日该货接待立即结束",
+    "house_rules": "CoC启发的简化房规，非官方完整规则",
     "max_rolls_per_item_day": 2,
     "price_limit": 9999,
     "final_offer_energy": 1,
+    "final_offer_rule": "counter_offer < price < original_price",
+    "final_chance_formula": "clamp(1,99,floor(clamp(1,99,70+bonus)*counter/(2*price-counter)))",
+    "initial_chance_formula": "clamp(1,99,floor(60+bonus-50*log2(price/reference))); above hidden budget: 1",
+    "final_budget_rule": "还价已反映预算，最终报价不再施加隐藏预算门槛",
     "endday": "自动谢绝未完成还价",
-    "miracle_probability": 0.05
+    "miracle_probability": 0.01
   }
 }

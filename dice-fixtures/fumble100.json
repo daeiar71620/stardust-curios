@@ -1,18 +1,40 @@
 {
   "version": 5,
-  "revision": 2,
+  "revision": 1,
   "day": 1,
   "total_days": 7,
-  "credits": 360,
-  "reputation": 1,
-  "energy": 10,
+  "credits": 260,
+  "reputation": 0,
+  "energy": 11,
   "max_energy": 12,
   "goal": {
     "credits": 650,
     "collection": 2
   },
   "phase": "active",
-  "inventory": [],
+  "inventory": [
+    {
+      "id": "I001",
+      "name": "折叠离子扳手",
+      "rarity": "common",
+      "kind": "tool",
+      "color": "#8ed4cb",
+      "condition": 80,
+      "value_estimate": [
+        77,
+        114
+      ],
+      "repair_cost": 15,
+      "price": 1,
+      "origin": "废轨回收站",
+      "description": "一把能伸进四维螺孔的扳手。握柄留着某位机修师的名字。",
+      "collected": false,
+      "sale_attempted_today": true,
+      "repair_attempted_today": false,
+      "repairs_remaining": 2,
+      "negotiating": false
+    }
+  ],
   "crates": [],
   "collection": [],
   "suppliers": [
@@ -42,10 +64,10 @@
     "multiplier": 1.25
   },
   "last_event": {
-    "seq": 3,
+    "seq": 2,
     "type": "sale",
-    "title": "最终报价 · 成交！",
-    "text": "双D10：30 + 5 → 35；掷低点 ≤ 37，成功率37%。百分骰点数不高于成功阈值，正常成交。 基础率70%，还价上浮42.9%，成功阈值37。 旅客买走「折叠离子扳手」，收入100星币，口碑+1。",
+    "title": "100大失败 · 客人告辞",
+    "text": "双D10：00 + 0 → 100；掷低点 ≤ 99，成功率99%。100 · 大失败，客人告辞；今日这件货接待结束。",
     "item": {
       "id": "I001",
       "name": "折叠离子扳手",
@@ -58,7 +80,7 @@
         114
       ],
       "repair_cost": 15,
-      "price": 100,
+      "price": 1,
       "origin": "废轨回收站",
       "description": "一把能伸进四维螺孔的扳手。握柄留着某位机修师的名字。",
       "collected": false,
@@ -68,29 +90,38 @@
       "negotiating": false
     },
     "roll": {
-      "id": 2,
+      "id": 1,
       "day": 1,
       "item_id": "I001",
       "item_name": "折叠离子扳手",
-      "customer_id": null,
-      "customer_name": "旅客",
-      "stage": "final",
+      "customer_id": "echo",
+      "customer_name": "回声",
+      "stage": "initial",
       "die": "D100",
-      "tens": 30,
-      "ones": 5,
-      "roll": 35,
-      "modifier": 0,
-      "modifiers": [],
-      "threshold": 37,
-      "probability": 0.37,
-      "base_chance": 70,
-      "premium": 0.42857142857142855,
+      "tens": 0,
+      "ones": 0,
+      "roll": 100,
+      "modifier": -5,
+      "modifiers": [
+        {
+          "label": "偏好不合",
+          "value": -10
+        },
+        {
+          "label": "符合品相期待",
+          "value": 5
+        }
+      ],
+      "threshold": 99,
+      "probability": 0.99,
+      "base_chance": null,
+      "premium": null,
       "rules_version": 5,
-      "counter_offer": 70,
-      "success": true,
-      "outcome": "success",
-      "price": 100,
-      "explanation": "百分骰点数不高于成功阈值，正常成交。 基础率70%，还价上浮42.9%，成功阈值37。"
+      "counter_offer": null,
+      "success": false,
+      "outcome": "fumble",
+      "price": 1,
+      "explanation": "100 · 大失败，客人告辞；今日这件货接待结束。"
     }
   },
   "log": [
@@ -100,11 +131,7 @@
     },
     {
       "day": 1,
-      "text": "双D10：50 + 0 → 50；掷低点 ≤ 1，成功率1%。百分骰点数高于成功阈值。 这次报价只有01能成交，成功率1%。 旅客愿出70星币。接受免费；最终报价须高于还价、低于初价，花1精力，成功率随相对还价涨幅下降；失败收入0，不能再接受旧还价。可先 preview-offer 预览。"
-    },
-    {
-      "day": 1,
-      "text": "双D10：30 + 5 → 35；掷低点 ≤ 37，成功率37%。百分骰点数不高于成功阈值，正常成交。 基础率70%，还价上浮42.9%，成功阈值37。 旅客买走「折叠离子扳手」，收入100星币，口碑+1。"
+      "text": "双D10：00 + 0 → 100；掷低点 ≤ 99，成功率99%。100 · 大失败，客人告辞；今日这件货接待结束。"
     }
   ],
   "capacity": 7,
@@ -156,7 +183,7 @@
         {
           "key": "credits",
           "label": "现金",
-          "current": 360,
+          "current": 260,
           "target": 650,
           "met": false
         },
@@ -197,8 +224,8 @@
         600
       ],
       "premium": 1.25,
-      "status": "waiting",
-      "attempted_today": false
+      "status": "left",
+      "attempted_today": true
     },
     {
       "id": "nox",
@@ -479,37 +506,46 @@
   ],
   "stats": {
     "crates_opened": 0,
-    "sales_count": 1,
-    "gross_earnings": 100,
+    "sales_count": 0,
+    "gross_earnings": 0,
     "days_traded": 0
   },
   "migration": null,
   "engine_upgrade": null,
   "negotiation": null,
   "last_roll": {
-    "id": 2,
+    "id": 1,
     "day": 1,
     "item_id": "I001",
     "item_name": "折叠离子扳手",
-    "customer_id": null,
-    "customer_name": "旅客",
-    "stage": "final",
+    "customer_id": "echo",
+    "customer_name": "回声",
+    "stage": "initial",
     "die": "D100",
-    "tens": 30,
-    "ones": 5,
-    "roll": 35,
-    "modifier": 0,
-    "modifiers": [],
-    "threshold": 37,
-    "probability": 0.37,
-    "base_chance": 70,
-    "premium": 0.42857142857142855,
+    "tens": 0,
+    "ones": 0,
+    "roll": 100,
+    "modifier": -5,
+    "modifiers": [
+      {
+        "label": "偏好不合",
+        "value": -10
+      },
+      {
+        "label": "符合品相期待",
+        "value": 5
+      }
+    ],
+    "threshold": 99,
+    "probability": 0.99,
+    "base_chance": null,
+    "premium": null,
     "rules_version": 5,
-    "counter_offer": 70,
-    "success": true,
-    "outcome": "success",
-    "price": 100,
-    "explanation": "百分骰点数不高于成功阈值，正常成交。 基础率70%，还价上浮42.9%，成功阈值37。"
+    "counter_offer": null,
+    "success": false,
+    "outcome": "fumble",
+    "price": 1,
+    "explanation": "100 · 大失败，客人告辞；今日这件货接待结束。"
   },
   "roll_history": [
     {
@@ -517,50 +553,34 @@
       "day": 1,
       "item_id": "I001",
       "item_name": "折叠离子扳手",
-      "customer_id": null,
-      "customer_name": "旅客",
+      "customer_id": "echo",
+      "customer_name": "回声",
       "stage": "initial",
       "die": "D100",
-      "tens": 50,
+      "tens": 0,
       "ones": 0,
-      "roll": 50,
-      "modifier": 0,
-      "modifiers": [],
-      "threshold": 1,
-      "probability": 0.01,
+      "roll": 100,
+      "modifier": -5,
+      "modifiers": [
+        {
+          "label": "偏好不合",
+          "value": -10
+        },
+        {
+          "label": "符合品相期待",
+          "value": 5
+        }
+      ],
+      "threshold": 99,
+      "probability": 0.99,
       "base_chance": null,
       "premium": null,
       "rules_version": 5,
       "counter_offer": null,
       "success": false,
-      "outcome": "failure",
-      "price": 9999,
-      "explanation": "百分骰点数高于成功阈值。 这次报价只有01能成交，成功率1%。"
-    },
-    {
-      "id": 2,
-      "day": 1,
-      "item_id": "I001",
-      "item_name": "折叠离子扳手",
-      "customer_id": null,
-      "customer_name": "旅客",
-      "stage": "final",
-      "die": "D100",
-      "tens": 30,
-      "ones": 5,
-      "roll": 35,
-      "modifier": 0,
-      "modifiers": [],
-      "threshold": 37,
-      "probability": 0.37,
-      "base_chance": 70,
-      "premium": 0.42857142857142855,
-      "rules_version": 5,
-      "counter_offer": 70,
-      "success": true,
-      "outcome": "success",
-      "price": 100,
-      "explanation": "百分骰点数不高于成功阈值，正常成交。 基础率70%，还价上浮42.9%，成功阈值37。"
+      "outcome": "fumble",
+      "price": 1,
+      "explanation": "100 · 大失败，客人告辞；今日这件货接待结束。"
     }
   ],
   "trade_rules": {

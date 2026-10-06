@@ -1,45 +1,68 @@
-"""Create public demo data using the real engine and temporary synthetic saves.
-Never opens a player save, never creates default save.json/observation.json.
-"""
+"""Generate intentional public demos, never real saves or default game files."""
 import json
 from pathlib import Path
 import tempfile
+
 import engine
-from test_dice_engine import fixture
+import _legacy_v3
+import _legacy_v4
+from test_percentile_v5 import fixture
+from test_dice_engine import fixture as old_fixture
 
 
 def main():
-    out = Path(__file__).with_name("dice-fixtures")
+    out = Path(__file__).with_name('dice-fixtures')
     out.mkdir(exist_ok=True)
-    report = ["# 合成公开玩法演练", "", "以下只使用临时合成存档，由真实独立引擎执行命令。未开始或读取任何玩家真实游戏局。", ""]
+    report = ['# v5 双D10合成公开演练', '',
+        '全部由临时合成存档执行引擎命令生成，未读取或开始真实游戏。公开文件不含随机状态、真实基价或确切预算。', '']
     cases = [
-        ("natural20", [20], 9999, None, True),
-        ("ordinary-success", [19], 40, None, False),
-        ("negotiating", [10, 20], 9999, None, True),
-        ("accepted", [10], 9999, ("accept", "I001"), True),
-        ("declined", [10], 9999, ("decline", "I001"), True),
-        ("final-miracle", [10, 20], 9999, ("offer", "I001", "9999"), True),
-        ("final-success", [10, 19], 9999, ("offer", "I001", "40"), False),
-        ("final-failure", [10, 12], 9999, ("offer", "I001", "9999"), True),
-        ("fumble", [1], 1, None, True),
+        ('critical01', [1], 9999, None, True),
+        ('ordinary-success', [35], 80, None, False),
+        ('negotiating', [50, 35], 9999, None, False),
+        ('preview', [50, 35], 9999, ('preview-offer', 'I001', '100'), False),
+        ('accepted', [50], 9999, ('accept', 'I001'), True),
+        ('declined', [50], 9999, ('decline', 'I001'), True),
+        ('final-critical01', [50, 1], 9999, ('offer', 'I001', '9998'), True),
+        ('final-success', [50, 35], 9999, ('offer', 'I001', '100'), False),
+        ('final-failure', [50, 99], 9999, ('offer', 'I001', '100'), False),
+        ('fumble100', [100], 1, None, True),
+        ('final-fumble100', [50, 100], 9999, ('offer', 'I001', '100'), False),
     ]
-    for name, faces, price, final, named in cases:
-        with tempfile.TemporaryDirectory(prefix="public-dice-demo-") as tmp:
-            store = engine.GameStore(Path(tmp) / "synthetic.json")
-            state = fixture(*faces, price=price)
+    for name, rolls, price, final, named in cases:
+        with tempfile.TemporaryDirectory(prefix='public-percentile-demo-') as tmp:
+            store = engine.GameStore(Path(tmp) / 'synthetic.json')
+            state = fixture(*rolls, price=price)
             engine._validate_state(state)
             engine._atomic_json(store.save_path, state)
-            command = ["sell", "I001"] + ([state["visitors"][0]["id"]] if named else [])
-            obs = store.execute(*command)
-            if final:
-                obs = store.execute(*final)
-            engine._atomic_json(out / f"{name}.json", obs)
-            report += [f"## {name}", f"命令：{' '.join(command)}" + (f"；{' '.join(final)}" if final else ""),
-                       f"结果：{obs['last_event']['title']}。{obs['last_event']['text']}",
-                       f"公开状态：现金{obs['credits']}，精力{obs['energy']}，成交{obs['stats']['sales_count']}件，骰史{len(obs['roll_history'])}条。", ""]
-    (out / "PUBLIC_PLAYTHROUGH.md").write_text("\n".join(report), encoding="utf-8")
-    print(out)
+            command = ['sell', 'I001'] + ([state['visitors'][0]['id']] if named else [])
+            public = store.execute(*command)
+            if final: public = store.execute(*final)
+            engine._atomic_json(out / f'{name}.json', public)
+            report += [f'## {name}', f"命令：{' '.join(command)}" + (f"；{' '.join(final)}" if final else ''),
+                       public['last_event']['text'], '']
+            if final and final[0] == 'preview-offer':
+                p = public['negotiation']['preview']
+                report += [f"本次预览：还价{p['accept_income']}，最终报价{p['price']}，涨幅{p['premium']:.1%}，基础率{p['base_chance']}%，精确成功率{p['threshold']}%。接受免费；再谈花1精力，失败收入0且旧还价作废。", '']
+    for version in [3, 4]:
+        with tempfile.TemporaryDirectory(prefix='public-history-demo-') as tmp:
+            module = _legacy_v3 if version == 3 else _legacy_v4
+            state = old_fixture(10, 20)
+            state['version'] = version
+            module.apply_command(state, 'sell', ['I001'])
+            module._validate_state(state)
+            source = Path(tmp) / 'synthetic-old.json'; source.write_text(json.dumps(state))
+            original = source.read_bytes()
+            store = engine.GameStore(Path(tmp) / 'synthetic-copy.json')
+            public = store.execute(f'import-v{version}', str(source))
+            if version == 4:
+                public = store.execute('offer', 'I001', '100')
+            assert source.read_bytes() == original
+            name = 'legacy-v3' if version == 3 else 'mixed-v4-v5'
+            engine._atomic_json(out / f'{name}.json', public)
+            report += [f'## {name}', '只读复制临时旧存档；历史D20保留原规则，未来重试使用v5。',
+                f"骰史版本：{[row['rules_version'] for row in public['roll_history']]}", '']
+    (out / 'PUBLIC_PLAYTHROUGH.md').write_text('\n'.join(report), encoding='utf-8')
+    print(f'{len(cases)+2} public synthetic fixtures: {out}')
 
 
-if __name__ == "__main__":
-    main()
+if __name__ == '__main__': main()

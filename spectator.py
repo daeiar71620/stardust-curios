@@ -30,6 +30,7 @@ LINE = '#3c535b'
 TABS = [('shelf', '店内货架'), ('visitors', '来店旅客'), ('collection', '收藏图鉴'), ('upgrades', '小店成长'), ('journal', '经营日志')]
 RARITIES = {'common': ('普通', '#9bcbbd'), 'rare': ('稀有', LILAC), 'legendary': ('传说', GOLD)}
 ROLL_LABELS = {'miracle': ('天然20 · 大成功', GOLD), 'success': ('普通成功', TEAL), 'failure': ('失败', RED), 'fumble': ('天然1 · 大失败', RED)}
+PERCENTILE_LABELS = {'miracle': ('01 · 大成功', GOLD), 'success': ('普通成功', TEAL), 'failure': ('失败', RED), 'fumble': ('100 · 大失败', RED)}
 KINDS = {'tool': '工具', 'artifact': '古物', 'bot': '机器人', 'plant': '植物', 'signal': '信号'}
 UPGRADES = {'workbench': '修理工作台', 'shelf': '陈列货架', 'display': '收藏展柜', 'showcase': '收藏展柜', 'lounge': '旅客休息角', 'sign': '星港招牌', 'scanner': '鉴定扫描仪'}
 
@@ -39,7 +40,7 @@ def number(value: Any, default=0):
     try:
         result = float(value)
         return result if math.isfinite(result) else default
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return default
 
 
@@ -61,30 +62,93 @@ def safe_color(value, fallback=TEAL):
         return fallback
 
 
+def percentile_rules(value):
+    source = as_dict(value)
+    return (source.get('rules_version') == 5 or source.get('die') == 'D100'
+            or 'tens' in source or 'ones' in source)
+
+
+def public_integer(value, low, high, step=1):
+    result = number(value, None)
+    if isinstance(value, bool) or result is None or result != int(result):
+        return None
+    result = int(result)
+    return result if low <= result <= high and (result-low) % step == 0 else None
+
+
 def public_roll(value):
     """An explicit public-field projection, never a derivation or a random roll."""
     source = as_dict(value)
     if not source:
         return {}
     fields = ('id', 'day', 'item_id', 'item_name', 'customer_id', 'customer_name',
-              'stage', 'face', 'modifier', 'modifiers', 'total', 'target',
-              'success', 'outcome', 'price', 'explanation')
+              'stage', 'modifier', 'modifiers', 'success', 'outcome', 'price',
+              'explanation', 'rules_version', 'counter_offer')
+    if percentile_rules(source):
+        fields += ('die', 'tens', 'ones', 'roll', 'threshold', 'probability', 'base_chance', 'premium')
+    else:
+        fields += ('face', 'total', 'target', 'base_target', 'rejection_penalty')
     roll = {key: source.get(key) for key in fields}
-    face = number(source.get('face'), -1)
-    roll['face'] = int(face) if not isinstance(source.get('face'), bool) and face == int(face) and 1 <= face <= 20 else None
+    roll['modifiers'] = [{key: row.get(key) for key in ('label', 'value')}
+                         for row in as_list(source.get('modifiers')) if isinstance(row, dict)]
+    if percentile_rules(source):
+        roll['tens'] = public_integer(source.get('tens'), 0, 90, 10)
+        roll['ones'] = public_integer(source.get('ones'), 0, 9)
+        roll['roll'] = public_integer(source.get('roll'), 1, 100)
+        roll['threshold'] = public_integer(source.get('threshold'), 1, 99)
+        # Check consistency without inventing a missing combined roll.
+        if (roll['tens'] is None or roll['ones'] is None
+                or roll['roll'] != (roll['tens'] + roll['ones'] or 100)):
+            roll['roll'] = None
+    else:
+        roll['face'] = public_integer(source.get('face'), 1, 20)
     return roll
 
 
 def roll_status(roll, negotiation=None):
     roll = as_dict(roll)
     pending = as_dict(negotiation)
+    if percentile_rules(roll) and public_roll(roll).get('roll') is None:
+        return '等待有效公开双骰', MUTED
     if pending and pending.get('item_id') == roll.get('item_id') and roll.get('stage') == 'initial' and roll.get('outcome') == 'failure':
         return '还价中', LILAC
-    return ROLL_LABELS.get(roll.get('outcome'), ('等待公开判定', MUTED))
+    labels = PERCENTILE_LABELS if percentile_rules(roll) else ROLL_LABELS
+    return labels.get(roll.get('outcome'), ('等待公开判定', MUTED))
+
+
+def roll_rules_label(roll):
+    if percentile_rules(roll):
+        return 'v5 · D100 低骰规则'
+    version = public_integer(roll.get('rules_version'), 3, 4) or 3
+    return f'v{version} · D20 原高骰规则'
+
+
+def roll_summary(roll):
+    if percentile_rules(roll):
+        result = roll.get('roll')
+        return f'D100 {result:02d}' if result is not None else 'D100 ?'
+    return f'D20 {roll.get("face") or "?"}'
+
+
+def percentile_chance_text(threshold):
+    threshold = public_integer(threshold, 1, 99)
+    if threshold is None:
+        return '等待完整公开成功阈值'
+    return f'低骰成功：01–{threshold:02d} · 成功率 {threshold}%'
 
 
 def roll_math(roll):
     """Read public adjudication fields verbatim; never estimate hidden economics."""
+    if percentile_rules(roll):
+        roll = public_roll(roll)
+        tens, ones, result = (roll.get(key) for key in ('tens', 'ones', 'roll'))
+        if result is None:
+            return 'D100 · 等待有效且一致的公开双骰'
+        digits = f'{tens:02d} + {ones} = {result:02d}'
+        threshold = roll.get('threshold')
+        if threshold is None:
+            return f'D100 {digits} · 等待完整公开阈值'
+        return f'D100 {digits} · ≤{threshold:02d} 成功（{threshold}%）'
     face = roll.get('face')
     if face is None:
         return '尚无有效公开骰点'
@@ -95,6 +159,118 @@ def roll_math(roll):
     target = number(roll.get('target'))
     sign = '+' if modifier >= 0 else '−'
     return f'D20 {face} {sign} {abs(modifier):g} = {total:g}  /  目标 {target:g}'
+
+
+def public_negotiation(value):
+    """Keep previews public, including when passing data into a detail overlay."""
+    source = as_dict(value)
+    if not source:
+        return {}
+    fields = ('item_id', 'item_name', 'customer_id', 'customer_name', 'rules_version', 'origin_rules_version',
+              'original_price', 'counter_offer', 'remaining_offers',
+              'final_offer_energy', 'accept_income',
+              'final_failure_income')
+    if not percentile_rules(source):
+        fields += ('rejection_penalty',)
+    pending = {key: source.get(key) for key in fields}
+    bounds = as_dict(source.get('final_offer_bounds'))
+    pending['final_offer_bounds'] = {key: bounds.get(key) for key in ('min', 'max', 'available')}
+    preview = as_dict(source.get('preview'))
+    fields = ('price', 'basis', 'modifier', 'modifiers', 'energy_cost',
+              'accept_income', 'success_income', 'failure_income', 'warning',
+              'suggested')
+    if percentile_rules(source) or preview.get('basis') == 'public_counter':
+        fields += ('base_chance', 'threshold', 'probability', 'premium', 'critical_probability', 'fumble_probability')
+    else:
+        fields += ('base_target_range', 'rejection_penalty', 'target_range', 'required_raw_range',
+                   'ordinary_possible', 'ordinary_guaranteed_at_19', 'natural_20_probability', 'natural_1_fails')
+    pending['preview'] = {key: preview.get(key) for key in fields} if preview else {}
+    if preview:
+        pending['preview']['modifiers'] = [{key: row.get(key) for key in ('label', 'value')}
+                                           for row in as_list(preview.get('modifiers')) if isinstance(row, dict)]
+    return pending
+
+
+def has_bargaining_preview(value):
+    source = as_dict(value)
+    return bool(source) and any(key in source for key in ('preview', 'final_offer_bounds', 'rejection_penalty'))
+
+
+def has_roll_breakdown(roll):
+    if percentile_rules(roll):
+        return (roll.get('stage') == 'final'
+                and public_integer(roll.get('threshold'), 1, 99) is not None
+                and public_integer(roll.get('base_chance'), 1, 99) is not None
+                and number(roll.get('counter_offer'), None) is not None)
+    return (roll.get('stage') == 'final'
+            and all(number(roll.get(key), None) is not None
+                    for key in ('base_target', 'rejection_penalty', 'target', 'modifier')))
+
+
+def dc_breakdown(roll):
+    if percentile_rules(roll):
+        return (f'基础几率 {number(roll.get("base_chance")):g}% · 公开还价 {number(roll.get("counter_offer")):g}'
+                f' → 阈值 {number(roll.get("threshold")):g}')
+    return (f'基础 DC {number(roll.get("base_target")):g} + 拒价 {number(roll.get("rejection_penalty")):g}'
+            f' = 最终 DC {number(roll.get("target")):g}')
+
+
+def needed_raw_text(low, high=None):
+    """Natural 1 always fails; an ordinary die can only be 2 through 19."""
+    low = max(2, number(low, 2))
+    high = max(low, number(high, low))
+    if low > 19:
+        return (f'原始骰需 ≥{low:g}–{high:g}；普通骰无法成功' if high != low
+                else f'原始骰需 ≥{low:g}；仅天然20可成（5%）')
+    if low == high:
+        return f'普通成功需原始骰 ≥{low:g}（2–19）'
+    return f'原始骰门槛 {low:g}–{high:g}（随实际 DC）'
+
+
+def preview_ranges(preview):
+    """Validate public ranges rather than manufacturing hidden target values."""
+    if (preview.get('basis') != 'public_bands'
+            or number(preview.get('price'), None) is None
+            or number(preview.get('modifier'), None) is None):
+        return None
+    ranges = []
+    for key in ('base_target_range', 'target_range', 'required_raw_range'):
+        pair = as_list(preview.get(key))
+        if len(pair) != 2 or any(number(v, None) is None for v in pair):
+            return None
+        low, high = (number(v) for v in pair)
+        if low > high:
+            return None
+        ranges.append((low, high))
+    if number(preview.get('rejection_penalty'), None) is None:
+        return None
+    return ranges
+
+
+def percentile_preview(preview):
+    """Validate published exact odds, never calculate hidden economic values."""
+    threshold = public_integer(preview.get('threshold'), 1, 99)
+    base = public_integer(preview.get('base_chance'), 1, 99)
+    probability = number(preview.get('probability'), None)
+    if (preview.get('basis') != 'public_counter' or threshold is None or base is None
+            or probability is None or not math.isclose(probability, threshold / 100)
+            or public_integer(preview.get('price'), 1, 9999) is None
+            or isinstance(preview.get('modifier'), bool)
+            or number(preview.get('modifier'), None) is None):
+        return None
+    return base, threshold
+
+
+def compact_range(pair):
+    return f'{pair[0]:g}' if pair[0] == pair[1] else f'{pair[0]:g}–{pair[1]:g}'
+
+
+def preview_chance_text(raw_range):
+    if raw_range[0] > 19:
+        return '只有天然20可成（5%）· 天然1必败'
+    if raw_range[1] > 19:
+        return '最难端仅天然20可成（5%）· 天然1必败'
+    return '天然20：5%必成 · 天然1必败'
 
 
 @lru_cache(maxsize=160)
@@ -400,7 +576,8 @@ class Renderer:
         if previous_roll:
             label,color=roll_status(previous_roll)
             if previous_roll.get('stage')=='initial' and previous_roll.get('outcome')=='failure':label='初次报价未达标'
-            self.text((x+18,y+h-28),f'上次 D20 {previous_roll.get("face") or "?"} · {label} · 查看记录 ›',15,color,False,w-36)
+            rules='低骰' if percentile_rules(previous_roll) else '原高骰'
+            self.text((x+18,y+h-28),f'上次 {roll_summary(previous_roll)} · {label} · {rules} · 查看记录 ›',15,color,False,w-36)
             self.hits.append(((x,y+h-40,x+w,y+h),('show_rolls',None)))
 
     def dice_art(self, x, y, size, face, color=GOLD):
@@ -418,16 +595,129 @@ class Renderer:
         self.text((cx,cy-size*.22),str(face) if face is not None else '?',size*.42,color,True,anchor='mt')
         self.text((cx,y+size*.76),'D20',max(11,size*.105),MUTED,True,anchor='mt')
 
+    def roll_art(self, x, y, size, roll, color=GOLD):
+        """The two recorded D10 faces, followed by their recorded D100 result."""
+        if not percentile_rules(roll):
+            return self.dice_art(x,y,size,roll.get('face'),color)
+        roll=public_roll(roll)
+        for index,key in enumerate(('tens','ones')):
+            xx=x+index*size*.53;ww=size*.47;hh=size*.65
+            points=[(xx+ww/2,y),(xx+ww,y+hh*.3),(xx+ww*.8,y+hh*.85),
+                    (xx+ww/2,y+hh),(xx+ww*.2,y+hh*.85),(xx,y+hh*.3)]
+            self.polygon(points,'#172e3b',color)
+            self.line(points+[points[0]],color,2)
+            digit=roll.get(key)
+            face='?' if digit is None else (f'{digit:02d}' if key=='tens' else str(digit))
+            self.text((xx+ww/2,y+hh*.19),face,max(15,size*.24),color,True,anchor='mt')
+            self.text((xx+ww/2,y+hh*.67),'十位' if index==0 else '个位',max(10,size*.1),MUTED,anchor='mt')
+        self.text((x+size/2,y+size*.74),roll_summary(roll),max(12,size*.15),color,True,anchor='mt')
+
+    def bargaining_card(self, box, o, *, details=False):
+        x,y,w,h=box
+        pending=public_negotiation(o.get('negotiation'))
+        roll=public_roll(o.get('last_roll') or as_dict(o.get('last_event')).get('roll'))
+        preview=as_dict(pending.get('preview'));bounds=as_dict(pending.get('final_offer_bounds'))
+        ranges=preview_ranges(preview);percentile=percentile_preview(preview)
+        offer=int(number(pending.get('counter_offer')))
+        accept=int(number(pending.get('accept_income'),offer))
+        self.rect((x,y,x+w,y+h),'#20353e',18,LILAC,1)
+        self.text((x+18,y+15),'还价中 · 最后一次报价',23,LILAC,True,w-170)
+        if not details:self.text((x+w-16,y+21),'查看骰子记录 ›',14,MUTED,anchor='rt')
+        who=' · '.join(str(v) for v in (pending.get('customer_name'),pending.get('item_name')) if v)
+        header_width=w-151 if percentile_rules(roll) else w-36
+        self.text((x+18,y+52),who or '待店主决定 · 只剩一次议价',17,INK,False,header_width)
+        self.text((x+18,y+79),f'标价 {int(number(pending.get("original_price"))):,} → 还价 {offer:,}',21,GOLD,True,header_width)
+        self.text((x+18,y+110),f'接受：收入 {accept:,} 星币 · 免费',18,TEAL,True,header_width)
+        if percentile_rules(roll):self.roll_art(x+w-114,y+47,94,roll,RED)
+        self.line([(x+18,y+141),(x+w-18,y+141)],LINE,1)
+        if percentile:
+            base,threshold=percentile;price=int(number(preview.get('price')))
+            example=preview.get('suggested')
+            if example is None:example=price==number(bounds.get('min'),None)
+            suffix='最低价示例' if example else '尚未掷骰'
+            self.text((x+18,y+152),f'拟报价 {price:,} 星币 · {suffix}',21,GOLD,True,w-36)
+            self.text((x+18,y+186),percentile_chance_text(threshold),19,INK,True,w-36)
+            premium=number(preview.get('premium'),None)
+            premium_text=f' · 溢价 {premium*100:g}%' if premium is not None else ''
+            self.text((x+18,y+215),f'基础 {base}%{premium_text} · 双 D10',16,MUTED,False,w-36)
+            self.text((x+18,y+240),'01 必成（1%）· 100 必败（1%）',16,GOLD,False,w-36)
+            energy=number(preview.get('energy_cost'),number(pending.get('final_offer_energy'),1))
+            income=int(number(preview.get('success_income'),price))
+            self.text((x+18,y+267),f'再报价：{energy:g} 体力 · 成功收入 {income:,}',17,INK,False,w-36)
+            self.text((x+18,y+294),f'失败收入 0 · 失去 {offer:,} 星币还价',17,RED,True,w-36)
+            self.text((x+18,y+h-24),'公开还价精确预览 · 越低越好 · 不掷骰',13,MUTED,False,w-36)
+        elif preview and ranges:
+            price=int(number(preview.get('price')))
+            example=preview.get('suggested')
+            if example is None:example=price==number(bounds.get('min'),None)
+            suffix='最低价示例' if example else '尚未掷骰'
+            self.text((x+18,y+152),f'拟报价 {price:,} 星币 · {suffix}',21,GOLD,True,w-36)
+            base,target,raw=ranges
+            penalty=number(preview.get('rejection_penalty'))
+            self.text((x+18,y+186),f'预估基础 DC {compact_range(base)} + 拒价 {penalty:g} = 最终 {compact_range(target)}',17,INK,True,w-36)
+            self.text((x+18,y+214),needed_raw_text(*raw),17,INK,False,w-36)
+            self.text((x+18,y+240),preview_chance_text(raw),16,MUTED,False,w-36)
+            energy=number(preview.get('energy_cost'),number(pending.get('final_offer_energy'),1))
+            income=int(number(preview.get('success_income'),price))
+            self.text((x+18,y+267),f'再报价：{energy:g} 体力 · 成功收入 {income:,}',17,INK,False,w-36)
+            self.text((x+18,y+294),f'失败收入 0 · 失去 {offer:,} 星币还价',17,RED,True,w-36)
+            self.text((x+18,y+h-24),'v4 原高骰规则 · 仅据公开区间 · 预览不消耗体力',13,MUTED,False,w-36)
+        elif bounds.get('available') is False:
+            self.text((x+18,y+156),'没有合法的最终报价',22,RED,True,w-36)
+            self.text((x+18,y+194),'报价须高于还价，并低于初次标价',18,INK,False,w-36)
+            self.text((x+18,y+226),'可以接受还价，或免费谢绝',18,MUTED,False,w-36)
+            self.text((x+18,y+h-27),'只读观战 · 不会替店主作决定',14,MUTED,False,w-36)
+        else:
+            self.text((x+18,y+156),'等待公开报价预览',22,GOLD,True,w-36)
+            self.text((x+18,y+194),'公开数据不足，暂不推算骰点或难度',17,MUTED,False,w-36)
+            self.text((x+18,y+232),f'再报价：{number(pending.get("final_offer_energy"),1):g} 体力',18,INK,False,w-36)
+            self.text((x+18,y+267),f'失败收入 0 · 失去 {offer:,} 星币还价',17,RED,True,w-36)
+        if not details:
+            self.hits.append(((x,y,x+w,y+h),('inspect',dict(_view='negotiation',negotiation=pending,last_roll=roll))))
+            self.hits.append(((x+w-153,y+5,x+w,y+47),('show_rolls',None)))
+
+    def bargaining_detail(self, source):
+        overlay=Image.new('RGBA',self.image.size,(6,16,24,220))
+        self.image=Image.alpha_composite(self.image.convert('RGBA'),overlay).convert('RGB');self.draw=ImageDraw.Draw(self.image)
+        w=min(self.W-40,710);h=min(self.H-80,800);x=(self.W-w)/2;y=(self.H-h)/2
+        self.rect((x,y,x+w,y+h),'#263d45',25,LILAC,2)
+        self.hits=[((0,0,self.W,self.H),('close',None))]
+        self.text((x+22,y+24),'掷骰前 · 报价预览',20,TEAL,True,w-140)
+        self.text((x+w-22,y+27),'点击返回 ×',16,MUTED,anchor='rt')
+        self.bargaining_card((x+12,y+63,w-24,344),source,details=True)
+        pending=public_negotiation(source.get('negotiation'));preview=as_dict(pending.get('preview'))
+        bounds=as_dict(pending.get('final_offer_bounds'))
+        if bounds.get('available') is True:
+            self.text((x+27,y+429),f'合法最终报价：{int(number(bounds.get("min"))):,}–{int(number(bounds.get("max"))):,} 星币',18,INK,True,w-54)
+        modifiers=[as_dict(v) for v in as_list(preview.get('modifiers'))]
+        unit='百分点' if preview.get('basis')=='public_counter' else ''
+        pieces=[f'{v.get("label", "修正")} {number(v.get("value")):+g}{unit}' for v in modifiers]
+        self.text((x+27,y+466),f'冻结加值 {number(preview.get("modifier")):+g}{unit} · ' + (' · '.join(pieces) or '没有公开修正项'),17,MUTED,False,w-54,2)
+        fallback=('基于公开还价的精确几率；最终失败收入0，不能回头接受旧还价。' if unit
+                  else '预览只使用公开区间；实际难度在最终报价落骰后公开。')
+        self.text((x+27,y+525),preview.get('warning') or fallback,17,MUTED,False,w-54,3)
+        if unit:
+            origin=public_integer(pending.get('origin_rules_version'),3,4)
+            caption=f'已由 v{origin} 迁移 · 原 D20 加值 ×5 个百分点' if origin else 'CoC 启发的简化房规，并非完整官方规则'
+            self.text((x+27,y+599),caption,15,MUTED,False,w-54)
+        roll=public_roll(source.get('last_roll'))
+        self.text((x+27,y+632),'上次已判定 · 初次报价',17,LILAC,True,w-54)
+        self.text((x+27,y+663),roll_math(roll),18,INK,False,w-54)
+        self.text((x+27,y+h-47),'接受 / 谢绝免费；最后报价消耗 1 体力',16,MUTED,False,w-54)
+        self.text((x+27,y+h-25),'只读预览 · 不会掷骰或完成交易',14,MUTED,False,w-54)
+
     def dice_card(self, box, o):
+        if has_bargaining_preview(o.get('negotiation')):
+            return self.bargaining_card(box,o)
         x,y,w,h=box
         roll=public_roll(o.get('last_roll') or as_dict(o.get('last_event')).get('roll'))
         pending=as_dict(o.get('negotiation'))
         if roll and (pending.get('item_id')!=roll.get('item_id') or roll.get('stage')!='initial' or roll.get('outcome')!='failure'):pending={}
         label,color=roll_status(roll,pending)
         self.rect((x,y,x+w,y+h),'#20353e',18,color,1)
-        self.pill((x+16,y+12),'D20 · 演示判定' if self.demo else 'D20 · 最新判定',color,15,'#30444b',10)
+        self.pill((x+16,y+12),roll_rules_label(roll)+(' · 演示' if self.demo else ''),color,15,'#30444b',10)
         self.text((x+w-16,y+20),'查看骰子记录 ›',14,MUTED,anchor='rt')
-        self.dice_art(x+15,y+54,114,roll.get('face'),color)
+        self.roll_art(x+15,y+54,114,roll,color)
         tx=x+147;tw=w-163
         self.text((tx,y+55),label,28,color,True,tw)
         who=' · '.join(str(v) for v in (roll.get('customer_name'),roll.get('item_name')) if v)
@@ -441,9 +731,15 @@ class Renderer:
             sold=roll.get('outcome') in ('miracle','success')
             self.text((tx,y+130),f'{"成交" if sold else "公开报价"} {price:,} 星币',23,GOLD if sold else INK,True,tw)
             message='再高的报价，也有奇迹时刻' if roll.get('outcome')=='miracle' else '旅客带着新故事离开' if sold else '本次交易未成'
-            self.text((tx,y+166),message,17,MUTED,False,tw)
+            if has_roll_breakdown(roll):
+                self.text((x+18,y+167),dc_breakdown(roll),17,INK,True,w-36)
+                chance=percentile_chance_text(roll.get('threshold')) if percentile_rules(roll) else needed_raw_text(number(roll.get('target'))-number(roll.get('modifier')))
+                self.text((x+18,y+195),chance,16,MUTED,False,w-36)
+            else:self.text((tx,y+166),message,17,MUTED,False,tw)
         if pending:
-            self.text((x+18,y+h-27),f'合计 {number(roll.get("total")):g} / 目标 {number(roll.get("target")):g}',13,MUTED,False,125)
+            math_text=(f'≤{roll.get("threshold") or "?"} 成功' if percentile_rules(roll)
+                       else f'合计 {number(roll.get("total")):g} / 目标 {number(roll.get("target")):g}')
+            self.text((x+18,y+h-27),math_text,13,MUTED,False,125)
             self.text((tx,y+h-27),'接受/谢绝免费 · 再报价1体力',14,MUTED,False,tw)
         else:self.text((x+18,y+h-27),roll_math(roll),15,MUTED,False,w-36)
         public_pending={key:pending.get(key) for key in ('item_id','original_price','counter_offer','remaining_offers','final_offer_energy')} if pending else {}
@@ -584,12 +880,13 @@ class Renderer:
         for i,roll in enumerate(rolls[page*per_page:(page+1)*per_page]):
             yy=y+i*rowh;label,color=roll_status(roll)
             self.rect((x,yy,x+w,yy+rowh-8),PANEL,14)
-            self.dice_art(x+9,yy+12,68,roll.get('face'),color)
+            self.roll_art(x+9,yy+12,68,roll,color)
             tx=x+90
             self.text((tx,yy+10),label,21,color,True,w-190)
             stage='最终议价' if roll.get('stage')=='final' else '初次报价'
             self.text((x+w-13,yy+14),f'第 {int(number(roll.get("day"),1))} 天',14,MUTED,anchor='rt')
-            self.text((tx,yy+43),f'{stage} · {roll.get("customer_name") or "旅客"} · {roll.get("item_name") or "旧物"}',15,INK,False,w-105)
+            rules='v5 低骰' if percentile_rules(roll) else roll_rules_label(roll)
+            self.text((tx,yy+43),f'{rules} · {stage} · {roll.get("customer_name") or "旅客"} · {roll.get("item_name") or "旧物"}',15,INK,False,w-105)
             self.text((tx,yy+70),roll_math(roll),14,MUTED,False,w-105)
             self.hits.append(((x,yy,x+w,yy+rowh-8),('inspect',dict(roll,_view='roll'))))
         if not rolls:
@@ -647,6 +944,7 @@ class Renderer:
 
     def detail_card(self, item):
         if item.get('_view')=='roll':return self.roll_detail(item)
+        if item.get('_view')=='negotiation':return self.bargaining_detail(item)
         overlay=Image.new('RGBA',self.image.size,(6,16,24,210))
         self.image=Image.alpha_composite(self.image.convert('RGBA'),overlay).convert('RGB')
         self.draw=ImageDraw.Draw(self.image)
@@ -670,23 +968,36 @@ class Renderer:
         self.hits=[((0,0,self.W,self.H),('close',None))]
         self.text((x+24,y+24),'演示数据 · 骰子记录' if self.demo else '已判定的骰子记录',19,TEAL,True,w-145)
         self.text((x+w-24,y+27),'点击返回 ×',16,MUTED,anchor='rt')
-        self.dice_art(x+w/2-72,y+73,144,roll.get('face'),color)
+        self.roll_art(x+w/2-72,y+73,144,roll,color)
+        self.text((x+w/2,y+222),roll_rules_label(roll),16,MUTED,False,w-54,anchor='mt')
         self.text((x+w/2,y+245),label,30,color,True,w-40,anchor='mt')
         self.text((x+27,y+301),f'第 {int(number(roll.get("day"),1))} 天 · {"最终议价" if roll.get("stage")=="final" else "初次报价"}',19,MUTED,False,w-54)
         self.text((x+27,y+338),f'{roll.get("customer_name") or "旅客"} · {roll.get("item_name") or "旧物"}',22,INK,True,w-54)
         self.text((x+27,y+376),f'公开报价 {int(number(roll.get("price"))):,} 星币',23,GOLD,True,w-54)
         self.text((x+27,y+421),roll_math(roll),21,INK,True,w-54)
         modifiers=[as_dict(v) for v in as_list(roll.get('modifiers'))]
-        pieces=[f'{v.get("label", "修正")} {number(v.get("value")):+g}' for v in modifiers]
-        self.text((x+27,y+467),' · '.join(pieces) or '没有公开修正项',17,MUTED,False,w-54,2)
-        self.text((x+27,y+528),roll.get('explanation') or '此处只回看已经完成的公开判定，不会再次掷骰。',18,MUTED,False,w-54,3)
+        unit='百分点' if percentile_rules(roll) else ''
+        pieces=[f'{v.get("label", "修正")} {number(v.get("value")):+g}{unit}' for v in modifiers]
+        if has_roll_breakdown(roll):
+            self.text((x+27,y+462),dc_breakdown(roll),18,INK,True,w-54)
+            chance=percentile_chance_text(roll.get('threshold')) if percentile_rules(roll) else needed_raw_text(number(roll.get('target'))-number(roll.get('modifier')))
+            self.text((x+27,y+493),chance,17,INK,False,w-54,2)
+            self.text((x+27,y+542),' · '.join(pieces) or '没有公开修正项',16,MUTED,False,w-54,2)
+            self.text((x+27,y+593),roll.get('explanation') or '此处只回看已经完成的公开判定，不会再次掷骰。',17,MUTED,False,w-54,3)
+        else:
+            self.text((x+27,y+467),' · '.join(pieces) or '没有公开修正项',17,MUTED,False,w-54,2)
+            self.text((x+27,y+528),roll.get('explanation') or '此处只回看已经完成的公开判定，不会再次掷骰。',18,MUTED,False,w-54,3)
         pending=as_dict(source.get('negotiation'))
         if pending:
             self.text((x+27,y+612),f'还价 {int(number(pending.get("counter_offer"))):,} 星币 · 待店主决定',20,LILAC,True,w-54)
             self.text((x+27,y+647),'接受 / 谢绝免费；最后报价消耗 1 体力',17,INK,False,w-54,2)
         self.line([(x+27,y+h-76),(x+w-27,y+h-76)],LINE,1)
-        self.text((x+27,y+h-60),'单次天然20：5%奇迹成交 · 天然1：直接告辞',16,GOLD,False,w-54,2)
-        self.text((x+27,y+h-29),'只读回看 · 不会再次掷骰或完成交易',14,MUTED,False,w-54)
+        rules=('01 必成：1% · 00 + 0 = 100 必败：1%' if percentile_rules(roll)
+               else '单次天然20：5%奇迹成交 · 天然1：直接告辞')
+        self.text((x+27,y+h-60),rules,16,GOLD,False,w-54,2)
+        footer=('CoC 启发简化房规 · 非完整官方规则 · 只读' if percentile_rules(roll)
+                else '只读回看 · 不会再次掷骰或完成交易')
+        self.text((x+27,y+h-29),footer,14,MUTED,False,w-54)
 
     def content(self, box, o):
         if self.tab=='collection':self.codex(box,o)
@@ -699,7 +1010,11 @@ class Renderer:
         width,height=max(240,int(size[0])),max(320,int(size[1]))
         wide=width/height>=1.16
         narrow=width<600 and not wide
+        o=as_dict(observation)
+        current_roll=public_roll(o.get('last_roll') or as_dict(o.get('last_event')).get('roll'))
+        extra=126 if has_bargaining_preview(o.get('negotiation')) else (32 if has_roll_breakdown(current_roll) and (as_dict(as_dict(o.get('last_event')).get('roll')) or not as_dict(o.get('last_event')).get('type')) else 0)
         self.W,self.H=(1320,940) if wide else ((520,max(1100,round(height/width*520))) if narrow else (760,1240))
+        if narrow and extra:self.H=max(self.H,1100+max(0,extra-48))
         self.image=Image.new('RGB',(self.W,self.H),BG); self.draw=ImageDraw.Draw(self.image)
         self.demo=bool(demo);self.journal_mode='rolls' if journal_mode=='rolls' else 'events'
         self.words=[];self.hits=[];self.tab=tab if tab in dict(TABS) else 'shelf';self.page=max(0,page);self.page_count=1
@@ -716,28 +1031,30 @@ class Renderer:
         elif wide:
             left=32;lw=706;right=762;rw=526
             self.metrics((left,132,lw,98),o)
-            self.shop_scene((left,247,lw,306),o,frame)
-            self.demand_strip((left,563,lw,72),o)
-            self.current_event((left,650,lw,229),o)
+            self.shop_scene((left,247,lw,306-extra),o,frame)
+            self.demand_strip((left,563-extra,lw,72),o)
+            self.current_event((left,650-extra,lw,229+extra),o)
             self.goal_card((right,132,rw,140),o)
             self.tab_bar((right,291,rw,56))
             self.content((right,362,rw,517),o)
         elif narrow:
+            trim=min(extra,48);shift=extra-trim
             self.metrics((22,120,476,88),o)
-            self.shop_scene((22,222,476,130),o,frame)
-            self.demand_strip((22,361,476,61),o)
-            self.current_event((22,431,476,218),o)
-            self.goal_card((22,663,476,127),o)
-            self.tab_bar((22,805,476,55))
-            self.content((22,876,476,self.H-918),o)
+            self.shop_scene((22,222,476,130-trim),o,frame)
+            self.demand_strip((22,361-trim,476,61),o)
+            self.current_event((22,431-trim,476,218+extra),o)
+            self.goal_card((22,663+shift,476,127),o)
+            self.tab_bar((22,805+shift,476,55))
+            self.content((22,876+shift,476,self.H-918-shift),o)
         else:
+            trim=min(extra,64);shift=extra-trim
             self.metrics((32,125,696,90),o)
-            self.shop_scene((32,231,696,164),o,frame)
-            self.demand_strip((32,404,696,56),o)
-            self.current_event((32,473,696,218),o)
-            self.goal_card((32,697,696,130),o)
-            self.tab_bar((32,843,696,55))
-            self.content((32,914,696,282),o)
+            self.shop_scene((32,231,696,164-trim),o,frame)
+            self.demand_strip((32,404-trim,696,56),o)
+            self.current_event((32,473-trim,696,218+extra),o)
+            self.goal_card((32,697+shift,696,130),o)
+            self.tab_bar((32,843+shift,696,55))
+            self.content((32,914+shift,696,282-shift),o)
         self.line([(32,self.H-33),(self.W-32,self.H-33)],LINE,1)
         status=error or ('演示预览 · 未推进游戏' if self.demo else '首周已结算 · 等店长继续' if o.get('phase')=='week_summary' else '星港只读观战 · 纯虚拟星币')
         self.text((32,self.H-24),status,14,RED if error else MUTED)
@@ -768,7 +1085,7 @@ class Spectator:
         self.tk=tk;self.ImageTk=ImageTk
         self.reader=ObservationReader(path);self.demo=bool(demo);self.journal_mode='rolls' if journal_mode=='rolls' else 'events'
         self.renderer=Renderer()
-        self.root=tk.Tk();self.root.title('星屑杂货铺 · D20 生意 / 只读观战' + (' · 演示' if self.demo else ''))
+        self.root=tk.Tk();self.root.title('星屑杂货铺 · 双 D10 百分骰 / 只读观战' + (' · 演示' if self.demo else ''))
         self.root.configure(bg=BG)
         sw,sh=self.root.winfo_screenwidth(),self.root.winfo_screenheight()
         self.root.geometry(geometry or f'{min(1320,sw-60)}x{min(940,sh-90)}+30+30')
@@ -808,8 +1125,23 @@ class Spectator:
             elif action[0]=='inspect':self.detail=action[1];self.last_signature=None
             elif action[0]=='close':self.detail=None;self.last_signature=None
 
+    def refresh_detail(self):
+        """A projection refresh must not leave a live quote looking current."""
+        detail=as_dict(self.detail)
+        pending=as_dict(as_dict(self.reader.observation).get('negotiation'))
+        if detail.get('_view')=='negotiation':
+            previous=as_dict(detail.get('negotiation'))
+            if not pending or pending.get('item_id')!=previous.get('item_id'):
+                self.detail=None
+            else:
+                self.detail=dict(_view='negotiation',negotiation=public_negotiation(pending),
+                                 last_roll=public_roll(as_dict(self.reader.observation).get('last_roll')))
+        elif detail.get('_view')=='roll' and detail.get('negotiation'):
+            if not pending or pending.get('item_id')!=detail.get('item_id'):
+                self.detail=dict(detail,negotiation={})
+
     def tick(self):
-        self.reader.poll()
+        if self.reader.poll():self.refresh_detail()
         w,h=self.canvas.winfo_width(),self.canvas.winfo_height()
         if w>10 and h>10:
             signature=(self.reader.stamp,w,h,self.tab,self.page,self.reader.error,str(self.detail),self.journal_mode,self.demo)
@@ -824,7 +1156,7 @@ class Spectator:
 
 
 def main(argv=None):
-    parser=argparse.ArgumentParser(description='星屑杂货铺：只读取公开状态的原生观战窗口')
+    parser=argparse.ArgumentParser(description='星屑杂货铺：双 D10 百分骰低骰房规；兼容原 D20 记录，只读观战')
     parser.add_argument('--observation',default=str(Path(__file__).with_name('observation.json')))
     parser.add_argument('--fullscreen',action='store_true')
     parser.add_argument('--geometry',help='可选窗口尺寸，例如 760x1240')
