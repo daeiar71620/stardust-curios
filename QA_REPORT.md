@@ -1,4 +1,66 @@
-# v8 Quality Collection Verification Report
+# Combined v9 Budget + Action/Publish Release Verification
+
+Verified 2026-10-06. The v9 engine/viewer/test sources below are unchanged from the validated 465-test budget release. Public-safe synchronization helpers are now packaged under `tools/web_sync/`; the prior budget-only ZIP remains separate.
+
+## Integration checks
+
+- Preserved budget verification: **465 tests passed** in the prior final engine/viewer aggregate, as detailed below. That full suite was not repeated for this packaging integration.
+- `python3 -m unittest discover -s tools/web_sync/tests -v`: **25 tests passed in 1.698 seconds** in the combined directory: the original 23 synthetic controller tests plus 2 real-v9-CLI cross-integration tests.
+- Cross-integration ran the documented config/stdin entrypoint with mocked HTTP, actual v9 `new`, `buy`, and `open` commands against temporary synthetic saves, and the actual known-art renderer. It verified revision advancement, no duplicate action on repeated operation ID, upload-only recovery after an engine commit, request-byte hash acknowledgement, known-art delta suppression, undiscovered-entry masking, and absence of the dummy access token from output and durable receipts.
+- All distributed Python files compile. Release manifest and ZIP checks cover the complete packaged file set. Only source, example configuration, documentation, tests, historical synthetic aggregate statistics, and sanitized text QA reports are included.
+
+The cross-tests never called the production website and did not inspect, migrate, or advance a real game. They do not establish that a new production gameplay action has completed through the controller. Site deployment and its current private-session receipt are verified separately; no owner-specific Site source, access token, URL, project ID, runtime configuration, receipt, actual game state, or private image is included here.
+
+The helper requires a compatible `/api/ingest` server acknowledgement containing `ok`, `session_id`, `session_epoch`, `revision`, `digest`, `request_sha256`, and `published_at`. Request SHA-256 is checked against the exact transmitted bytes; server projection digest is stored separately. Linux/macOS POSIX locking and Python 3.10+ are required. The controller provides conservative recovery, not an unconditional exactly-once guarantee across arbitrary crashes.
+
+---
+
+# v9 Smooth Budget Verification Report
+
+Verified 2026-10-06 using isolated synthetic states and temporary public-only rendering fixtures. No actual player save or observation was read, copied, migrated, or advanced. The prior v8 source is unchanged; this release is a separate copy.
+
+## Scope and result
+
+V9 replaces only the initial-sale hidden-budget cliff with a continuous relative-overage penalty before integer rounding. Named and ordinary customers use the same rule. Their private budget now means normal spending comfort rather than a hard purchase limit. Public counter eligibility still uses the same public range ceiling, reference-price, preference and condition checks. Final-offer exact previews, the 01 miracle / 100 fumble, two independent D10 draws, buyer quotas, prices/costs, quality collections and RNG sequencing remain unchanged.
+
+## Automated checks
+
+- `python3 -m unittest discover -q`: **465 tests passed in 83.403 seconds** on the final engine/viewer/test sources. This includes all 412 prior tests and 53 new v9 tests: 15 focused curve tests, 26 independent formula/migration audit tests, and 12 viewer/privacy/history tests.
+- `python3 -m py_compile *.py`: passed.
+- Both standalone fixture generators passed: 13 dice scenes and 16 management scenes, created in temporary directories and cleaned afterward.
+- The independent audit passed separately, and the final aggregate includes its additional boundary-date and cross-version-pending regressions.
+
+The expected argparse usage/error output tests rejection of a snapshot path that could overwrite the observation; it is not a failing test.
+
+## Formula calibration and privacy
+
+The implementation calculates raw = 60 + bonus − 50 × log2(price/reference), clamps the continuous base to 1–99, divides by 1 + 2 × max(0,price/budget−1), then floors and clamps the result to 1–99. Within budget it exactly matches the frozen v8 formula. It does not floor the base before applying the penalty, and it does not let an uncapped raw value bypass the overage penalty.
+
+At hidden reference = hidden comfort budget = 100 and bonus = 0, synthetic prices 99 / 100 / 101 / 110 / 150 / 200 / 300 give thresholds 60 / 60 / 58 / 44 / 15 / 3 / 1 percent. This demonstrates the boundary and tail; it is not a forecast for any actual item or buyer. Full price sweeps are non-increasing and bounded 1–99. No fresh balance campaign or claim of economic optimality accompanies this narrow fix; the retained v6 balance report remains historical.
+
+Both buyer types can normally buy just above comfort budget. All 100 digit pairs still use exactly two RNG draws; the number of successes equals the threshold, including 01 and excluding 100. Missing/invalid v9 budget inputs and unknown transaction-rule versions fail closed. Current initial roll records retain null base_chance and premium; no private overage multiplier is exported. Repeated status, inspect, market and visitors reads are deterministic and preserve private bytes/RNG. Changing exact budgets or actual base values cannot change the pre-roll public projection. First-sale exact odds remain unadvertised; final quotes still preview exact odds from public inputs only.
+
+## Save and history compatibility
+
+Private/public protocol and new transaction labels are 9. The added `_legacy_v8.py` is byte-identical to the original v8 engine (SHA-256 ef7e25636884a99b0eac7797379b32e68457f5262a4a5a455945a5295718b17e). `import-v8` is explicit, copy-only, refuses existing destinations and never plays or auto-continues a game. Existing v1–v6 import routes remain supported.
+
+The new budget provenance boundary preserves historical v3/v4/v5/v6 labels and threshold/results. Already-promised pending quotes validate their initial roll with its original rule, including the old 1% over-budget cliff, then preserve the same free accept/decline and unchanged final-offer calculation. A later committed final roll carries v9, while the initial origin stays historical. All resources, private hidden inputs, RNG, buyer usage and v8 quality progress are preserved; collection grace is neither reset nor regranted.
+
+Independent audit covers zero history, pending over-budget quotes, mixed D20/percentile history, absolute sequence boundaries after the 60-row tail truncates, malformed provenance, relabeling attempts, and copy/read rejection atomicity. The audit found two provenance-hardening gaps that were fixed and retested: direct v1–v5 imports must share the existing management boundary, and retained/new rows must lie on the correct day side of the budget-import boundary. Direct v1–v6 metadata also matches its synchronous collection-upgrade point. These checks detect inconsistent saves; no claim is made that local editable save files are tamper-proof.
+
+Prior regression expectations changed only for the new protocol/current rule label and the intentionally replaced over-budget formula. Existing within-budget arithmetic and final-offer parity remain tested against frozen engines, and historical labels remain explicit rather than globally rewritten.
+
+## Viewer verification
+
+V9 percentile detection, new/historical rule labels and honored pending-quote captions are covered by 12 new viewer tests. The worker passed these with 17 existing buyer tests, then passed 95 general/catalog/collection viewer tests, for 124 affected viewer checks. Eight temporary synthetic wide and phone-sized buyer, ordinary-visitor and v3/v6-origin negotiation renders were visually inspected: comfort-budget text, the unchanged hard counter-eligibility ceiling, exact final forecasts and historical captions fit without overlap or clipping. The temporary images were deleted. This was headless Pillow verification; an actual GUI/window check was not run, and the existing real observer was not opened or altered.
+
+## Distribution
+
+The release contains engine/viewer source, frozen validators, documentation, reproducible tests/generators, historical aggregate balance statistics and text-only QA reports. The ZIP excludes private/runtime saves, observations, generated demo scenes, playthroughs, screenshots, cache directories, locks, credentials and temporary outputs. No real-session migration or GitHub publication was performed as part of this development worker.
+
+---
+
+# Historical v8 Quality Collection Verification Report
 
 Verified 2026-10-06 using synthetic states only. No actual player save was read, copied, migrated or advanced. Development used a separate directory; the previous v7 source remains intact.
 

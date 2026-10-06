@@ -29,3 +29,16 @@ __pycache__/
 /*-demo.json
 /*-demo.png
 /*-demo.jpg
+
+# Private publication state and access material must never enter releases.
+*.action-publish.binding.json
+config.local*.json
+*.local.json
+.env
+.env.*
+credentials*.json
+**/outbox/
+**/receipts/
+**/known-art/
+**/private-images/
+**/runtime/

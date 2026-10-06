@@ -1,8 +1,18 @@
-# Public observation schema, version 8 (quality-collection release)
+# Public observation schema, version 9 (smooth initial-budget release)
 
-## V8 quality collection contract
+## V9 normal-budget contract
 
-Top-level protocol 8 is independent of unchanged transaction `rules_version:6`. Existing cash/reputation/upgrade targets, base values, fees, buyer budgets, dice, quotes and item limits are not rebalanced.
+Save/protocol `version` and new transaction `rules_version` are 9. Both named buyers and ordinary travelers have a private daily normal budget: a spending-comfort input, not a hard ability-to-buy cap. Above that budget, initial success decays smoothly by the formula below; within budget, the prior initial probability is unchanged. 01 still succeeds at the legal price and 100 still fails. The public counter-eligibility ceiling remains hard, including `ask <= budget_range[1]`, reference, category and condition constraints. The exact public final-price formula is unchanged, with no second hidden-budget check.
+
+For compatibility, public `budget_range` fields keep their names and existing numeric ranges. They describe normal spending budgets. Do not expose the precise budget or invent an exact initial pre-roll probability from those ranges.
+
+`budget_upgrade` is null for a fresh v9 game, otherwise exactly `{from_version,source_roll_seq,source_day,source_phase}`. `from_version` is one of 1,2,3,4,5,6,8; `source_roll_seq` is the final retained old roll ID (0 when none), and day/phase record the source point. This metadata contains no file path or private input. Older boundaries remain independently recorded. All retained v3–v6 rolls keep their rules labels and outcomes; only later committed rolls use 9. A pending quote is governed by `rules_version:9` and retains `origin_rules_version:3|4|5|6`; native pending quotes use origin 9.
+
+`import-v8 SOURCE` is copy-only, requires a new unused destination, and preserves v8 collection progress/grace, resources, history, pending quotes and RNG. Existing `import-v1` through `import-v6` remain available; there is no `import-v7` because that release used protocol 6. No source is modified, no game is advanced, and no real session is automatically migrated.
+
+## Preserved V8 quality collection contract
+
+V8 introduced quality collection under protocol 8 and transaction rules 6. V9 preserves those collection requirements, cash/reputation/upgrade targets, base values, fees, budget ranges, dice and item limits; only the initial over-budget threshold changes.
 
 - Stage1: 2 distinct cabinet items at condition >=70
 - Stage2: 5 at >=75, across at least 3 qualified categories
@@ -21,40 +31,40 @@ Every opened public item adds:
 
 `replace-collection INVENTORY_ID` requires strictly higher condition and an unlocked item. It swaps membership one-for-one, including a full inventory. Both identities, hidden base values, prices, origin, repair counts and sale/repair day locks survive; only `collected` flags change. No RNG advance, cash or reputation reward, or repeated set activation. `repair` resolves cabinet items explicitly; `sell` and `price` remain inventory-only. The replacement public event type is `replace_collection`.
 
-`collection_upgrade` is null for native 8 or `{from_version:1..6,source_day,source_phase,legacy_stage_index}` on explicit copy import. Its immutable index is the number of earned milestones at import. Grace applies exactly while the earned count equals that index; the next stage uses quality rules, including if multiple milestones are checked by one action. Reads never grant or reset grace. v8 is rejected by all old import routes. Old won/missed first-week outcomes and earned history remain unchanged. Native first-week settlement uses qualified collection; old pending first-week copies retain the single old-stage grace. No actual session is automatically migrated.
+`collection_upgrade` is null for native v9, retained unchanged by `import-v8`, or `{from_version:1..6,source_day,source_phase,legacy_stage_index}` on explicit copy import. Its immutable index is the number of earned milestones at import. Grace applies exactly while the earned count equals that index; the next stage uses quality rules, including if multiple milestones are checked by one action. Reads never grant or reset grace. v8 is accepted only by `import-v8`; v9 is rejected by all import routes. Old won/missed first-week outcomes and earned history remain unchanged. Native first-week settlement uses qualified collection; old pending first-week copies retain the single old-stage grace. No actual session is automatically migrated.
 
 The codex entry schema stays unchanged: only discovered entries contain identity fields, and quality details derive from opened public items. Public aggregates never consult unopened cargo.
 
 The spectator and AI player consume only the public observation or CLI output. They must never open the private save. All actions go through `engine.py` / `GameStore.execute`.
 
-V6 retains v5’s two independent decimal D10s for a roll-low percentile result. These are simplified CoC-inspired house rules, not the complete official rules. V3/v4 D20 and v5 percentile records may coexist with new v6 records; inspect each record's `rules_version` rather than interpreting all history using the observation's top-level version.
+V9 retains v5/v6’s two independent decimal D10s for a roll-low percentile result. These are simplified CoC-inspired house rules, not the complete official rules. V3/v4 D20 and v5/v6 percentile records may coexist with new v9 records; inspect each record's `rules_version` rather than interpreting all history using the observation's top-level version.
 
 
-## V6 public buyer capacity and counter eligibility
+## Preserved V6 public buyer capacity and counter eligibility
 
-`walkins`: `{daily_limit:1,used:0|1,remaining:0|1,budget_range:[60,120],min_condition:45,visit_rule}`. The exact ordinary budget is private and committed for the day. A valid initial ordinary `sell` consumes the one visit on every result, including refusal or fumble. Validation failures consume nothing. Named customers retain their separate daily cap. Only entering a new day replenishes capacity; reads, repricing, changing items, preview, reload and declined counters do not.
+`walkins`: `{daily_limit:1,used:0|1,remaining:0|1,budget_range:[60,120],min_condition:45,visit_rule}`. The exact ordinary normal budget is private and committed for the day. A valid initial ordinary `sell` consumes the one visit on every result, including refusal or fumble. Validation failures consume nothing. Named customers retain their separate daily cap. Only entering a new day replenishes capacity; reads, repricing, changing items, preview, reload and declined counters do not.
 
 Each public item adds `public_reference` and `sale_options`. Reference is the catalog reference adjusted for condition/demand and rounded to an integer, never the hidden per-item base.
 
 `sale_options[]`: `{customer_id,customer_name,available,counter_eligible,reasons,public_reference,max_counter_ask,budget_range,min_condition,preference_match,condition_met,ask,warning}`. The ordinary buyer has null `customer_id`; named entries cover today's listed visitors.
 
 - `available` concerns today's transaction locks, active phase, at least 1 energy, uncollected item and remaining buyer capacity
-- `counter_eligible` is a separate deterministic condition: ask≥2; ask≤floor(public_reference×5/4); ask≤public budget upper bound; condition at least the buyer minimum; named buyer category matches
-- `max_counter_ask` is min(floor(public_reference×5/4),public budget upper bound). It does not by itself imply condition/category eligibility
-- `reasons` explains failed public eligibility checks, including exact public thresholds. No private affordability input is read. Empty means qualification passes
-- Eligibility is **not** initial exact success probability or exact personal affordability, and does not revoke already pending imported quotes
+- `counter_eligible` is a separate deterministic condition: ask≥2; ask≤floor(public_reference×5/4); ask≤public normal-budget range upper bound; condition at least the buyer minimum; named buyer category matches
+- `max_counter_ask` is min(floor(public_reference×5/4),public normal-budget range upper bound). It does not by itself imply condition/category eligibility
+- `reasons` explains failed public eligibility checks, including exact public thresholds. No private spending-comfort input is read. Empty means qualification passes
+- Eligibility is **not** initial exact success probability or a promise of initial success, and does not revoke already pending imported quotes
 - Normal initial failure gives a binding counter only when qualified. Otherwise the buyer leaves, no revenue, item remains and both daily opportunities are spent
 - 01 succeeds at any legal price regardless of eligibility/budget;100 always ends the meeting; ordinary initial success is still possible when counter-ineligible
 
 `trade_rules` additionally includes `counter_rule,walkin_daily_limit,walkin_budget_range,walkin_min_condition`. `market` and `visitors` responses include `walkins`; `inspect` includes the item's new public fields. The spectator must consume these fields instead of deriving hidden initial probability.
 
-`management_upgrade`: null for native v8 (or a directly imported native v6), or `{from_version:1..5,source_day,source_phase,source_roll_seq,walkins_used_on_import}` for copy imports. It preserves the v6 boundary separately from `engine_upgrade`, which still describes earlier D20 boundaries. Old records at or below this sequence keep their original rules, and new records are v6. V5 records and pending quotes are never relabeled to pretend they used v6 eligibility. `walkins_used_on_import` is 0 or 1; any already recorded ordinary initial attempt today consumes today's v6 capacity. V1/v2 lack complete sold-visit records, so copy import conservatively marks today's slot used. Next day restores it.
+`management_upgrade`: null for native v9 (or a directly imported native v6/v8 without an earlier management upgrade), or `{from_version:1..5,source_day,source_phase,source_roll_seq,walkins_used_on_import}` for copy imports. It preserves the v6 boundary separately from `engine_upgrade`, which still describes earlier D20 boundaries. The pre-management records retain their original rules. The later historical segment up to `budget_upgrade.source_roll_seq` uses v6, while new v9 records follow the budget boundary. V5 records and pending quotes are never relabeled to pretend they used v6 eligibility. `walkins_used_on_import` is 0 or 1; any already recorded ordinary initial attempt today consumes today's v6 capacity. V1/v2 lack complete sold-visit records, so copy import conservatively marks today's slot used. Next day restores it.
 
-Old pending quotes are grandfathered even when their ask, category or condition fails today's v6 eligibility. Context budget for old ordinary pending quotes remains null, preserving the original contract. Their final preview and outcome use the unchanged public premium formula without a new hidden budget veto.
+Old pending quotes are grandfathered even when their ask, category or condition fails the public counter eligibility introduced in v6. Context budget for old ordinary pending quotes whose origin is v3/v4/v5 remains null, preserving their original contract; v6-origin quotes retain their committed budget. Their final preview and outcome use the unchanged public premium formula without a new hidden budget veto.
 
 ## Shop and campaign fields
 
-- `version`: 8
+- `version`: 9
 - `revision`: monotonic integer for successful mutations; reads and previews do not increment it
 - `day`: ongoing day count; `total_days:7` is the introductory checkpoint, not a campaign cutoff
 - `credits`, `reputation`, `energy`, `max_energy`, `capacity`, `operating_cost`
@@ -82,9 +92,9 @@ Old pending quotes are grandfathered even when their ask, category or condition 
 - `continue_command`: `continue` or null
 - `unlimited`: true
 
-`daily_event`: `{id,title,description,sale_multiplier,salvage_discount,repair_discount,cost_delta,energy_delta}`. Public event descriptions state current percentage-point bonuses. `sale_multiplier` remains legacy metadata and is not an extra multiplier in v5/v6 trade calculations.
+`daily_event`: `{id,title,description,sale_multiplier,salvage_discount,repair_discount,cost_delta,energy_delta}`. Public event descriptions state current percentage-point bonuses. `sale_multiplier` remains legacy metadata and is not an extra multiplier in v5/v6/v9 trade calculations.
 
-`visitors`: `[{id,name,role,preferred_kind,preference_label,min_condition,budget_range:[low,high],premium,status,attempted_today}]`. Status is `waiting`, `negotiating`, `bought`, or `left`. Exact budget is private. `premium` remains legacy metadata and is not a v5/v6 calculation input; it is distinct from a final-roll record's relative price `premium`.
+`visitors`: `[{id,name,role,preferred_kind,preference_label,min_condition,budget_range:[low,high],premium,status,attempted_today}]`. Status is `waiting`, `negotiating`, `bought`, or `left`. Exact normal budget is private; its range is spending comfort, not a hard purchase cap. `premium` remains legacy metadata and is not a v5/v6/v9 calculation input; it is distinct from a final-roll record's relative price `premium`.
 
 `codex`: `{total,discovered,collected,entries:[...]}`. In the v7 release, unseen identities are withheld by the engine itself. Every entry has a stable, non-semantic 1-based `slot`:
 
@@ -95,7 +105,7 @@ Old pending quotes are grandfathered even when their ask, category or condition 
 - Collection-set descriptions disclose category/count/perk only; they do not list unknown members
 - The new viewer additionally redacts undiscovered entries from older v2–v6 projections that used to include every identity. Unknown illustrations are identical regardless of hidden kind, rarity or name
 
-Save/protocol `version` is 8; the v7 catalog release used protocol 6 and must be explicitly copied with `import-v6`. Catalog discovery and masking rules remain unchanged. `status` refreshes a stale current-version public file without changing the private save. Sealed cargo remains private.
+Save/protocol `version` is 9; the v7 catalog release used protocol 6 and must be explicitly copied with `import-v6`. Catalog discovery and masking rules remain unchanged. `status` refreshes a stale current-version public file without changing the private save. Sealed cargo remains private.
 
 `collection_sets`: `[{id,name,description,required:3,current,completed,perk}]`. `current` counts distinct collected types of that kind.
 
@@ -107,14 +117,14 @@ Save/protocol `version` is 8; the v7 catalog release used protocol 6 and must be
 
 Optional `persistence_warning`: a committed action or public-projection refresh encountered a filesystem synchronization/write problem. An already committed action remains successful; do not retry that action automatically. Once the filesystem is writable, `status` reconstructs the public projection.
 
-## V5/v6 percentile roll records
+## V5/v6/v9 percentile roll records
 
 - `last_roll`: null before any rolls, otherwise the newest public record
 - `roll_history`: the latest 60 records, in chronological order; reads never add or reroll them
 - `last_event.roll`, when present, matches the latest history record
 - An acceptance or decline adds no roll. `last_roll` can therefore be historical; use `last_event` and `negotiation` for current transaction state and actual accepted-counteroffer income
 
-Every v5/v6 record has exactly these fields:
+Every v5/v6/v9 record has exactly these fields:
 
 `{id,day,item_id,item_name,customer_id,customer_name,stage,die,tens,ones,roll,modifier,modifiers,threshold,probability,base_chance,premium,rules_version,counter_offer,success,outcome,price,explanation}`
 
@@ -130,24 +140,33 @@ Every v5/v6 record has exactly these fields:
 - `probability`: `threshold / 100`, the exact success probability for that committed roll, already including 01
 - `base_chance`: final base rate 1–99, or null for an initial roll
 - `premium`: `(price - counter_offer) / counter_offer` for a final roll, or null for an initial roll
-- `rules_version`: 6 for new rolls; retained v5 records remain 5
+- `rules_version`: 9 for new rolls; retained v5 and v6 records remain 5 and 6 respectively
 - `counter_offer`: the forfeited binding quote for a final roll, otherwise null
 - `success`: boolean
 - `outcome`: `miracle` for 01, `fumble` for 100, otherwise `success` or `failure`
 - `price`: the legal asking price for this roll. A later accepted quote has its own sale event/statistics; never use the earlier failed roll's asking price as accepted-sale revenue
 - `explanation`: public rule/result text
 
-There are no v5/v6 `face`, `total`, `target`, `base_target`, or `rejection_penalty` fields. Do not synthesize a D20 total or target from percentile records.
+There are no v5/v6/v9 `face`, `total`, `target`, `base_target`, or `rejection_penalty` fields. Do not synthesize a D20 total or target from percentile records.
 
 ### Threshold formulas and privacy
 
 Define `clamp(x) = max(1,min(99,x))` and `bonus = modifier` in percentage points.
 
-Initial threshold:
+V9 initial threshold:
 
-`clamp(floor(60 + bonus - 50 * log2(price / reference)))`
+```text
+raw = 60 + bonus - 50 * log2(price / reference)
+base = clamp(raw)
+excess = max(0, price / budget - 1)
+threshold = clamp(floor(base / (1 + 2 * excess)))
+```
 
-Here `reference` is the item's private actual reference: `hidden_base_value * (0.30 + 0.007 * condition) * demand_multiplier`, using the day's multiplier only for the matching kind and 1 otherwise. In v6, an initial price above the buyer's exact private budget sets the threshold to 1 for both named customers and ordinary travelers. The ordinary traveler's exact daily budget is committed privately within the public 60–120 range. Retained v5 ordinary-traveler records had no budget gate. The 01 exception still settles at the full legal price, including 9999.
+Clamp `base` before applying the excess factor; floor only after division, then clamp the final result to 1–99. `budget` is the buyer's private normal spending comfort. For either buyer type, `price <= budget` reproduces the prior within-budget result exactly; above budget, there is no one-coin cliff to threshold 1. Higher prices gradually reduce the threshold, with a floor of 1.
+
+Pure formula examples with `reference=budget=100`, `bonus=0`: prices 99/100/101/110/150/200/300 yield thresholds 60/60/58/44/15/3/1. They are illustrative inputs, not forecasts for any actual public item.
+
+Here `reference` is the item's private actual reference: `hidden_base_value * (0.30 + 0.007 * condition) * demand_multiplier`, using the day's multiplier only for the matching kind and 1 otherwise. Historical v6 initial records (including those held by v8 saves) used `clamp(floor(raw))` within budget and threshold 1 above the exact private budget for both named customers and ordinary travelers. These results are not recalculated. The ordinary traveler's exact daily budget is committed privately within the public 60–120 range. Retained v5 ordinary-traveler records had no budget gate. The 01 exception still settles at the full legal price, including 9999.
 
 The formula is public; its private inputs and exact pre-roll initial probability are not. A committed initial record publishes its realized threshold and probability. Public item estimates instead use the catalog's nominal reference value in place of the hidden per-item base; they are not exact trade inputs.
 
@@ -157,7 +176,7 @@ Final threshold:
 
 `threshold = clamp(floor(base * counter_offer / (2 * price - counter_offer)))`
 
-Equivalently, the unclamped quotient is `base / (1 + 2 * premium)`. The implementation uses integer arithmetic for the final division. First clamp the base, then floor the quotient, then clamp the threshold. There is no fixed +3 rejection penalty, no floor derived from the initial roll, and no further hidden valuation or budget gate. The committed counteroffer already reflects affordability; final previews and final rolls share exactly the same public-input calculation.
+Equivalently, the unclamped quotient is `base / (1 + 2 * premium)`. The implementation uses integer arithmetic for the final division. First clamp the base, then floor the quotient, then clamp the threshold. There is no fixed +3 rejection penalty, no floor derived from the initial roll, and no further hidden valuation or budget gate. The committed counteroffer already reflects normal spending willingness; final previews and final rolls share exactly the same public-input calculation.
 
 For `counter_offer:150` and `bonus:0`, `base_chance:70`: final prices 165, 225, and 9998 have thresholds 58, 35, and 1 respectively, provided each price is below the original price. At threshold 1, only 01 succeeds; at threshold 99, only 100 fails.
 
@@ -178,8 +197,8 @@ Ordinary travelers get no category/condition-expectation components. Zero-valued
 
 `{item_id,item_name,customer_id,customer_name,original_price,counter_offer,rules_version,origin_rules_version,remaining_offers:1,final_offer_energy:1,final_offer_bounds:{min,max,available},accept_income,final_failure_income:0,preview,commands:{accept,decline,preview,offer}}`
 
-- Native v6 initial ordinary failures (02–99 above threshold) create a pending negotiation only when the public counter eligibility checks pass; otherwise the buyer leaves. 100 ends the meeting immediately; 01 succeeds immediately
-- `rules_version:6` governs the remaining final attempt. `origin_rules_version` is 6 for native play or 3/4/5 for an imported pending negotiation
+- Native v9 initial ordinary failures (02–99 above threshold) create a pending negotiation only when the public counter eligibility checks pass; otherwise the buyer leaves. 100 ends the meeting immediately; 01 succeeds immediately
+- `rules_version:9` governs the remaining final attempt. `origin_rules_version` is 9 for native play or 3/4/5/6 for an imported pending negotiation
 - `counter_offer` is one binding quote, not the exact private budget
 - Bounds are `min = counter_offer + 1`, `max = original_price - 1`, and `available = min <= max`
 - `accept ITEM`: settles the fixed quote with no energy cost and no dice
@@ -212,7 +231,7 @@ Preview fields:
 - `warning`: public risk explanation
 - `suggested`: true for the default candidate, false for an explicitly previewed candidate
 
-This is an exact final probability, not a range of hidden-input estimates. It uses only the public counteroffer and frozen public bonuses and exposes no new private reference/budget inputs. There are no `base_target_range`, `target_range`, `required_raw_range`, or `rejection_penalty` fields in the v5/v6 preview.
+This is an exact final probability, not a range of hidden-input estimates. It uses only the public counteroffer and frozen public bonuses and exposes no new private reference/budget inputs. There are no `base_target_range`, `target_range`, `required_raw_range`, or `rejection_penalty` fields in the v5/v6/v9 preview.
 
 ## Trade rules object
 
@@ -227,12 +246,13 @@ This is an exact final probability, not a range of hidden-input estimates. It us
 - `price_limit:9999`, `final_offer_energy:1`
 - `final_offer_rule:'counter_offer < price < original_price'`
 - `final_chance_formula`: the final clamp/floor formula documented above
-- `initial_chance_formula`: the initial formula and above-budget override documented above
+- `initial_chance_formula`: the initial clamped-base, smooth over-budget formula documented above
+- `initial_budget_rule`: normal spending comfort with smooth initial decline above it; no exact pre-roll initial forecast
 - `final_budget_rule`: no additional hidden final budget gate
 - `endday`: automatically decline unfinished bargaining
 - `miracle_probability:0.01`
 
-The critical chance remains 1% per percentile check. A native v6 initial ask of 9999 fails counter eligibility and therefore receives no retry after ordinary failure: it has one 1% miracle chance. Previously promised imported quotes remain actionable under their grandfathered contract. This deliberately retained high-price miracle is not an exploit-proof economic design.
+The critical chance remains 1% per percentile check. A native v9 initial ask of 9999 fails counter eligibility and therefore receives no retry after ordinary failure: it has one 1% miracle chance. Previously promised imported quotes remain actionable under their grandfathered contract. This deliberately retained high-price miracle is not an exploit-proof economic design.
 
 ## Legacy D20 history and copy imports
 
@@ -248,16 +268,16 @@ Old records retain their original D20 results and outcomes. Each uses:
 - `counter_offer` is retained for v4 final records; otherwise null
 - No percentile dice or thresholds are invented for legacy history
 
-`import-v1 SOURCE`, `import-v2 SOURCE`, `import-v3 SOURCE`, `import-v4 SOURCE`, and `import-v5 SOURCE` require a complete private source save and a new unused `--save DESTINATION`. The engine refuses in-place import, an existing destination, or an existing destination observation. The matching frozen validator checks the source. Import does not rewrite the source or its observation, play a turn, continue the week, charge maintenance, reroll, or advance the source game RNG. Merely opening an old private save does not auto-upgrade it.
+`import-v1 SOURCE`, `import-v2 SOURCE`, `import-v3 SOURCE`, `import-v4 SOURCE`, `import-v5 SOURCE`, `import-v6 SOURCE`, and `import-v8 SOURCE` require a complete private source save and a new unused `--save DESTINATION`. The engine refuses in-place import, an existing destination, or an existing destination observation. The matching frozen validator checks the source. Import does not rewrite the source or its observation, play a turn, continue the week, charge maintenance, reroll, or advance the source game RNG. Merely opening an old private save does not auto-upgrade it.
 
 - V1 import supplies campaign fields, limited reconstructed discoveries, and new statistics; independently seeded import visitors do not advance the preserved game RNG
 - V2 import preserves resources, committed cargo, customer budgets, used attempts, and statistics; roll history starts empty
 - V3/v4 import preserves committed resources, history, binding pending quote, locks, and RNG. Current event descriptions retain their v5 percentage-point wording
-- For v3/v4 imports, `source_roll_seq` is the final legacy record ID at import. `legacy_v3_roll_seq` is the end of the retained v3 prefix (equal to the source sequence for a direct v3 import; zero when a v4 source has no v3 prefix). Through the v5 boundary, later old IDs use v5; new v6 IDs follow the management boundary described above
-- A pending legacy quote remains immediately acceptable/declinable for free. For a v3/v4 D20 origin, its frozen modifier and each component are multiplied by five to obtain percentage points for the remaining v6 attempt; old history itself retains its original units. The new pending object explicitly reports `rules_version:6` and its initial `origin_rules_version`
+- For v3/v4 imports, `source_roll_seq` is the final legacy record ID at import. `legacy_v3_roll_seq` is the end of the retained v3 prefix (equal to the source sequence for a direct v3 import; zero when a v4 source has no v3 prefix). Through the v5 boundary, later old IDs use v5; historical v6 IDs follow the management boundary, and new v9 IDs follow the budget boundary described above
+- A pending legacy quote remains immediately acceptable/declinable for free. For a v3/v4 D20 origin, its frozen modifier and each component are multiplied by five to obtain percentage points for the remaining v9 attempt; old history itself retains its original units. The new pending object explicitly reports `rules_version:9` and its initial `origin_rules_version`
 - The remaining final attempt must satisfy v5's strict lower-than-initial price boundary and uses the exact v5 final formula. Even a pending v3 negotiation does not authorize a same-price retry
 
-Public v3/v4/v5 observations remain read-only historical inputs for the spectator. A v6 observation may show an old `last_roll`, a v6 pending preview, and mixed D20/percentile history without altering any past result.
+Public v3/v4/v5/v6/v8 observations remain read-only historical inputs for the spectator. A v9 observation may show an old `last_roll`, a v9 pending preview, and mixed D20/percentile history without altering any past result. The viewer labels each roll by its own rules and labels grandfathered negotiations as v9 continuing the original v3/4/5/6 quote.
 
 ## CLI and privacy contract
 

@@ -84,10 +84,10 @@ class CollectionHarness(unittest.TestCase):
 
 
 class QualityMilestoneTests(CollectionHarness):
-    def test_native_schema_8_does_not_upgrade_trade_rules(self):
+    def test_current_schema_keeps_quality_progress_and_marks_current_trades(self):
         state = fixture()
-        self.assertEqual(engine.VERSION, 8)
-        self.assertEqual(state['version'], 8)
+        self.assertEqual(engine.VERSION, 9)
+        self.assertEqual(state['version'], engine.VERSION)
         self.assertIsNone(state['collection_upgrade'])
         state['inventory'] = [item('wrench', 1)]
         state['discovered'] = ['wrench']
@@ -95,10 +95,10 @@ class QualityMilestoneTests(CollectionHarness):
         state['rng'] = rng_for(99)
         self.write(state)
         public = self.store.execute('sell', 'I001')
-        self.assertEqual(public['version'], 8)
-        self.assertEqual(public['last_roll']['rules_version'], 6)
-        self.assertEqual(public['negotiation']['rules_version'], 6)
-        self.assertEqual(public['negotiation']['origin_rules_version'], 6)
+        self.assertEqual(public['version'], engine.VERSION)
+        self.assertEqual(public['last_roll']['rules_version'], engine.TRADE_RULES_VERSION)
+        self.assertEqual(public['negotiation']['rules_version'], engine.TRADE_RULES_VERSION)
+        self.assertEqual(public['negotiation']['origin_rules_version'], engine.TRADE_RULES_VERSION)
 
     def test_first_week_69_70_inclusive_boundary_and_personal_total(self):
         state = cabinet(fixture(), ['wrench', 'lamp'], [69, 70])
@@ -518,7 +518,7 @@ class CollectionMigrationTests(CollectionHarness):
                 for key, value in baseline.items():
                     if key not in allowed_changes:
                         self.assertEqual(current[key], value, (version, key))
-                self.assertEqual(current['version'], 8)
+                self.assertEqual(current['version'], engine.VERSION)
                 self.assertEqual(current['collection_upgrade'], dict(from_version=version,
                     source_day=baseline['day'], source_phase=baseline['phase'], legacy_stage_index=0))
                 self.assertEqual(public['collection_progress']['min_condition'], 0)
@@ -626,10 +626,13 @@ class CollectionMigrationTests(CollectionHarness):
                 self.assertIsNotNone(old['negotiation'])
                 store, public = self.migrate(old, suffix=action)
                 migrated = store.load()
-                for field in ('negotiation', 'roll_seq', 'roll_history', 'inventory', 'walkins', 'visitors'):
+                for field in ('roll_seq', 'roll_history', 'inventory', 'walkins', 'visitors'):
                     self.assertEqual(migrated[field], json.loads(json.dumps(old[field])))
+                expected_pending = copy.deepcopy(old['negotiation'])
+                expected_pending['rules_version'] = engine.TRADE_RULES_VERSION
+                self.assertEqual(migrated['negotiation'], expected_pending)
                 self.assertEqual(migrated['negotiation']['context']['budget'], old['walkins']['budget'])
-                self.assertEqual(public['negotiation']['rules_version'], 6)
+                self.assertEqual(public['negotiation']['rules_version'], engine.TRADE_RULES_VERSION)
                 self.assertEqual(public['negotiation']['origin_rules_version'], 6)
                 before = (store.save_path.read_bytes(), store.observation_path.read_bytes())
                 with self.assertRaisesRegex(engine.GameError, '还价|等待|待谈'):
@@ -640,12 +643,14 @@ class CollectionMigrationTests(CollectionHarness):
                 args = ['I002'] + ([str(price)] if action == 'offer' else [])
                 expected = copy.deepcopy(old)
                 legacy.apply_command(expected, action, args)
+                if action == 'offer':
+                    expected['roll_history'][-1]['rules_version'] = engine.TRADE_RULES_VERSION
                 public = store.execute(action, *args)
                 actual = store.load()
                 for field in ('credits', 'energy', 'rng', 'roll_history', 'roll_seq', 'negotiation',
                               'inventory', 'walkins', 'stats', 'reputation'):
                     self.assertEqual(actual[field], json.loads(json.dumps(expected[field])), field)
-                self.assertEqual(public['last_roll']['rules_version'], 6)
+                self.assertEqual(public['last_roll']['rules_version'], engine.TRADE_RULES_VERSION if action == 'offer' else 6)
 
     def test_relabeling_v8_as_v6_cannot_regrant_grace(self):
         for stage in (0, 1):
@@ -741,7 +746,7 @@ class CollectionPrivacyAndTradeTests(CollectionHarness):
             visitor['budget'] = visitor['budget_range'][0]
         self.assertEqual(engine.observation(state), engine.observation(other))
 
-    def test_trade_constants_and_percentile_results_match_frozen_v6(self):
+    def test_trade_constants_and_within_budget_results_match_frozen_v6(self):
         for field in ('CATALOG', 'SUPPLIERS', 'UPGRADE_RULES', 'EVENTS', 'SET_RULES',
                       'OPERATING_COST', 'WALKIN_DAILY_LIMIT', 'WALKIN_BUDGET_RANGE',
                       'WALKIN_MIN_CONDITION', 'COUNTER_MAX_RATIO'):
@@ -754,12 +759,20 @@ class CollectionPrivacyAndTradeTests(CollectionHarness):
                     state['next_item'] = 2
                     state['discovered'] = ['wrench']
                     state['rng'] = rng_for(roll)
+                    state['walkins']['budget'] = 120
                     module.apply_command(state, 'sell', ['I001'])
+                for record in old['roll_history']:
+                    record['rules_version'] = engine.TRADE_RULES_VERSION
+                if old['negotiation']:
+                    old['negotiation'].update(rules_version=engine.TRADE_RULES_VERSION, origin_rules_version=engine.TRADE_RULES_VERSION)
                 for field in ('credits', 'energy', 'rng', 'roll_history', 'roll_seq', 'negotiation',
                               'inventory', 'walkins', 'visitors', 'stats', 'reputation'):
                     self.assertEqual(current[field], old[field], (roll, field))
-                self.assertEqual(engine.observation(current)['trade_rules'],
-                                 legacy.observation(old)['trade_rules'])
+                current_rules = engine.observation(current)['trade_rules']
+                old_rules = legacy.observation(old)['trade_rules']
+                for key in old_rules:
+                    if key != 'initial_chance_formula':
+                        self.assertEqual(current_rules[key], old_rules[key], key)
 
 
 if __name__ == '__main__':

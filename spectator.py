@@ -79,7 +79,7 @@ def safe_color(value, fallback=TEAL):
 
 def percentile_rules(value):
     source = as_dict(value)
-    return (source.get('rules_version') in (5, 6) or source.get('die') == 'D100'
+    return (source.get('rules_version') in (5, 6, 9) or source.get('die') == 'D100'
             or 'tens' in source or 'ones' in source)
 
 
@@ -131,9 +131,14 @@ def roll_status(roll, negotiation=None):
     return labels.get(roll.get('outcome'), ('等待公开判定', MUTED))
 
 
+def percentile_rules_version(roll):
+    version = public_integer(as_dict(roll).get('rules_version'), 5, 9)
+    return version if version in (5, 6, 9) else 5
+
+
 def roll_rules_label(roll):
     if percentile_rules(roll):
-        version = public_integer(roll.get('rules_version'), 5, 6) or 5
+        version = percentile_rules_version(roll)
         return f'v{version} · D100 低骰规则'
     version = public_integer(roll.get('rules_version'), 3, 4) or 3
     return f'v{version} · D20 原高骰规则'
@@ -301,14 +306,15 @@ def public_catalog_entry(value, slot=None):
     return result
 
 
-def walkins_summary(value):
+def walkins_summary(value, normal_budget=False):
     visits = public_walkins(value)
     if not visits:
         return '普通散客 · 等待公开名额'
     remaining, limit = visits.get('remaining'), visits.get('daily_limit')
     amount = f'{remaining}/{limit} 次' if remaining is not None and limit is not None else '等待公开名额'
     budget = visits.get('budget_range')
-    money = f' · 预算 {budget[0]}–{budget[1]}' if budget else ' · 预算待公开'
+    label = '常规预算' if normal_budget else '预算'
+    money = f' · {label} {budget[0]}–{budget[1]}' if budget else f' · {label}待公开'
     return f'散客剩余 {amount}{money}'
 
 
@@ -398,9 +404,10 @@ def has_bargaining_preview(value):
 def honored_quote_label(value):
     """A migrated, already-promised quote keeps its original commitment."""
     source=as_dict(value)
-    origin=public_integer(source.get('origin_rules_version'),3,5)
-    if source.get('rules_version')==6 and origin is not None:
-        return f'v6 继续履行 v{origin} 已承诺还价'
+    origin=public_integer(source.get('origin_rules_version'),3,6)
+    current=source.get('rules_version')
+    if current in (6,9) and origin is not None and origin < current:
+        return f'v{current} 继续履行 v{origin} 已承诺还价'
     return None
 
 
@@ -535,6 +542,7 @@ class Renderer:
         self.hits = []
         self.tab = 'shelf'
         self.page = 0
+        self.normal_budget = False
 
     def rect(self, box, fill=PANEL, radius=18, outline=None, width=1):
         self.draw.rounded_rectangle(tuple(round(v) for v in box), radius=radius, fill=fill, outline=outline, width=width)
@@ -1215,7 +1223,7 @@ class Renderer:
         self.text((x+27,y+525),preview.get('warning') or fallback,17,MUTED,False,w-54,3)
         honored=honored_quote_label(pending)
         if honored:
-            origin=public_integer(pending.get('origin_rules_version'),3,5)
+            origin=public_integer(pending.get('origin_rules_version'),3,6)
             caption=honored+(' · 原D20加值×5' if origin in (3,4) else '')
             self.text((x+27,y+599),caption,15,LILAC,True,w-54)
         elif unit:
@@ -1285,7 +1293,7 @@ class Renderer:
         self.star(x+11,y+17,6,TEAL)
         self.text((x+27,y+6),f'今日行情  ·  {label}',19,TEAL,False,w-27)
         if number(o.get('version')) >= 6 and as_dict(o.get('walkins')):
-            self.text((x+2,y+37),walkins_summary(o.get('walkins'))+' · 查看来客 ›',17,MUTED,False,w-4)
+            self.text((x+2,y+37),walkins_summary(o.get('walkins'),self.normal_budget)+' · 查看来客 ›',17,MUTED,False,w-4)
             self.hits.append(((x,y+30,x+w,y+h),('tab','visitors')))
         elif daily:
             label=daily.get('title') or daily.get('name') or daily.get('text','')
@@ -1418,7 +1426,7 @@ class Renderer:
             self.text((tx,yy+10),label,21,color,True,w-190)
             stage='最终议价' if roll.get('stage')=='final' else '初次报价'
             self.text((x+w-13,yy+14),f'第 {int(number(roll.get("day"),1))} 天',14,MUTED,anchor='rt')
-            rules=(f'v{public_integer(roll.get("rules_version"),5,6) or 5} 低骰'
+            rules=(f'v{percentile_rules_version(roll)} 低骰'
                    if percentile_rules(roll) else roll_rules_label(roll))
             self.text((tx,yy+43),f'{rules} · {stage} · {roll.get("customer_name") or "旅客"} · {roll.get("item_name") or "旧物"}',15,INK,False,w-105)
             self.text((tx,yy+70),roll_math(roll),14,MUTED,False,w-105)
@@ -1566,7 +1574,7 @@ class Renderer:
         if walkins:
             budget=walkins.get('budget_range')
             visitors.insert(0,{'name':'普通散客','_view':'walkins','walkins':walkins,
-                              'role':f'公开预算 {budget[0]}–{budget[1]} 星币' if budget else '等待公开预算范围',
+                              'role':f'公开{"常规" if self.normal_budget else ""}预算 {budget[0]}–{budget[1]} 星币' if budget else '等待公开预算范围',
                               'preference_label':f'还价需品相 ≥{walkins["min_condition"]}%' if walkins.get('min_condition') is not None else '等待公开品相条件',
                               'status':'waiting' if number(walkins.get('remaining'))>0 else 'left'})
         self.text((x+2,y+5),'今天谁推开了店门',22,INK,True,w-120)
@@ -1588,7 +1596,9 @@ class Renderer:
             self.text((x+93,yy+45),v.get('role','星港旅客'),16,GOLD,False,w-108)
             self.text((x+93,yy+71),v.get('preference_label',''),16,MUTED,False,w-108)
             budget=as_list(v.get('budget_range'))
-            desc=str(v.get('preference_label') or '')+(f"。公开预算 {budget[0]}–{budget[-1]} 星币。" if len(budget)>1 else '')
+            desc=str(v.get('preference_label') or '')+(f"。公开{'常规' if self.normal_budget else ''}预算 {budget[0]}–{budget[-1]} 星币。" if len(budget)>1 else '')
+            if self.normal_budget and len(budget)>1:
+                desc+='常规预算是消费舒适度，超出会逐步降低初次成功率；精确预算隐藏。'
             self.hits.append(((x,yy,x+w,yy+99),('inspect',dict(v,description=desc))))
         if not visitors:self.text((x+18,y+65),'门口风铃静静响，下一位旅客还在路上',20,MUTED,False,w-36,2)
         self.pagination((x,y+h-28,w,28),page,pages)
@@ -1635,7 +1645,7 @@ class Renderer:
             self.text((x+24,y+150),'已有还价请按待谈面板处理；新售前条件不撤销已承诺还价',16,LILAC,True,w-48,2)
         else:self.text((x+24,y+150),item.get('description') or '这件旧物的故事，还在慢慢展开。',16,MUTED,False,w-48,2)
         self.line([(x+24,y+198),(x+w-24,y+198)],LINE,1)
-        self.text((x+24,y+213),walkins_summary(item.get('walkins')),17,TEAL,True,w-48)
+        self.text((x+24,y+213),walkins_summary(item.get('walkins'),self.normal_budget),17,TEAL,True,w-48)
         options=item['sale_options'];count=len(options);page=item['_sale_page']%max(1,count)
         if not options:
             self.text((x+24,y+274),'等待公开售前条件',25,GOLD,True,w-48)
@@ -1648,12 +1658,14 @@ class Renderer:
             self.text((x+24,y+260),name+suffix,25,INK,True,w-48)
             self.text((x+24,y+300),status,22,color,True,w-48)
             budget=option.get('budget_range')
-            self.text((x+24,y+339),f'公开预算 {budget[0]}–{budget[1]} 星币' if budget else '等待公开预算范围',18,GOLD,False,w-48)
+            self.text((x+24,y+339),f'公开{"常规" if self.normal_budget else ""}预算 {budget[0]}–{budget[1]} 星币' if budget else '等待公开预算范围',18,GOLD,False,w-48)
             maximum=option.get('max_counter_ask')
             cap=(f'还价标价范围：2–{maximum} 星币' if maximum is not None and maximum>=2
                  else '没有合法还价标价空间' if maximum is not None else '等待公开还价标价上限')
             self.text((x+24,y+373),cap,18,INK,True,w-48)
-            self.text((x+24,y+404),'须同时不高于参考价的125%及公开预算上限',16,MUTED,False,w-48,2)
+            counter_rule=('还价仍须≤参考价125%及常规预算区间上限' if self.normal_budget
+                          else '须同时不高于参考价的125%及公开预算上限')
+            self.text((x+24,y+404),counter_rule,16,MUTED,False,w-48,2)
             minimum=option.get('min_condition')
             condition='达标' if option.get('condition_met') is True else '未达标' if option.get('condition_met') is False else '待公开'
             preference='匹配' if option.get('preference_match') is True else '不匹配' if option.get('preference_match') is False else '待公开'
@@ -1665,7 +1677,9 @@ class Renderer:
             self.text((x+24,y+492),reason_text,16,RED if reasons else MUTED,False,w-48,5)
             warning=option.get('warning') or '初次正式出售消耗1体力，并占用该买家与该货今日接待；普通失败是否还价取决于公开条件。'
             self.text((x+24,y+604),warning,16,INK,False,w-48,6)
-            self.text((x+24,y+738),'若直接离店：收入0，货物留下\n还价资格非成交保证；初次精确成功率不公开',16,MUTED,False,w-48,2)
+            budget_note=('常规预算是消费舒适度，超出后初次成功率逐步降低\n还价资格非成交保证；初次精确成功率不公开' if self.normal_budget
+                         else '若直接离店：收入0，货物留下\n还价资格非成交保证；初次精确成功率不公开')
+            self.text((x+24,y+738),budget_note,16,MUTED,False,w-48,2)
             self.text((x+24,y+785),'01 仍可奇迹成交（1%）· 100 直接离店（1%）',16,GOLD,False,w-48,2)
         footer=y+h-58
         self.line([(x+24,footer-12),(x+w-24,footer-12)],LINE,1)
@@ -1686,7 +1700,7 @@ class Renderer:
         self.hits=[((0,0,self.W,self.H),('close',None))]
         self.text((x+24,y+24),'普通散客 · 今日接待',23,TEAL,True,w-150)
         self.text((x+w-22,y+29),'点击返回 ×',16,MUTED,anchor='rt')
-        self.text((x+24,y+89),walkins_summary(visits),23,GOLD,True,w-48,2)
+        self.text((x+24,y+89),walkins_summary(visits,self.normal_budget),23,GOLD,True,w-48,2)
         used=visits.get('used')
         self.text((x+24,y+158),f'今日已用 {used if used is not None else "?"} 次 · 次日重置',20,INK,True,w-48)
         rule=visits.get('visit_rule') or '正式出售无论成交、还价或离店都占用名额；改价、换货或重启不刷新，次日重置。'
@@ -1695,7 +1709,9 @@ class Renderer:
         minimum=visits.get('min_condition')
         self.text((x+24,y+380),f'还价需品相 ≥{minimum if minimum is not None else "?"}%，且符合公开标价条件',18,INK,False,w-48,2)
         self.text((x+24,y+441),'普通失败可能直接离店，收入0；货物留下，今日不能换客重试。',18,RED,False,w-48,3)
-        self.text((x+24,y+529),'预算仅公布范围，不保证买得起标价；01仍可奇迹成交。',18,GOLD,False,w-48,3)
+        budget_note=('常规预算是消费舒适度，超出会逐步降低初次成功率；精确预算隐藏，01仍可奇迹成交。' if self.normal_budget
+                     else '旧版预算仅公布范围，初次成交仍按当时规则；01可奇迹成交。')
+        self.text((x+24,y+529),budget_note,18,GOLD,False,w-48,3)
         self.text((x+24,y+h-35),'在货架点击旧物，可逐位查看出售条件',16,MUTED,False,w-48)
 
     def roll_detail(self, source):
@@ -1752,6 +1768,7 @@ class Renderer:
         wide=width/height>=1.16
         narrow=width<600 and not wide
         o=as_dict(observation)
+        self.normal_budget=number(o.get('version')) >= 9
         current_roll=public_roll(o.get('last_roll') or as_dict(o.get('last_event')).get('roll'))
         extra=126 if has_bargaining_preview(o.get('negotiation')) else (32 if has_roll_breakdown(current_roll) and (as_dict(as_dict(o.get('last_event')).get('roll')) or not as_dict(o.get('last_event')).get('type')) else 0)
         self.W,self.H=(1320,940) if wide else ((520,max(1100,round(height/width*520))) if narrow else (760,1240))

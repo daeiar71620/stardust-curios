@@ -1,4 +1,4 @@
-"""Current v6 contract. Synthetic in-memory and temporary fixtures only."""
+"""Preserved management contract on the current engine. Synthetic in-memory and temporary fixtures only."""
 import copy
 import json
 from pathlib import Path
@@ -234,14 +234,16 @@ class ManagementV6Tests(unittest.TestCase):
             result=self.store.execute('offer','I001',str(price))
             self.assertEqual(result['last_roll']['outcome'],outcome)
 
-    def test_final_formula_and_initial_formula_unchanged_from_v5(self):
+    def test_final_and_within_budget_initial_formula_unchanged_from_v5(self):
         for bonus in range(-20,66,5):
             for counter in (1,40,100,500,9997):
                 for price in (counter+1,min(9999,counter*2),9999):
                     self.assertEqual(engine._final_chance(bonus,counter,price),_legacy_v5._final_chance(bonus,counter,price))
         for price in range(1,10000):
             context=dict(reference=100,budget=90,modifier=5,modifiers=[dict(label='口碑',value=5)])
-            self.assertEqual(engine._initial_chance(context,price),_legacy_v5._initial_chance(context,price))
+            self.assertEqual(engine._initial_chance(context,price,6),_legacy_v5._initial_chance(context,price))
+            if price <= context["budget"]:
+                self.assertEqual(engine._initial_chance(context,price),_legacy_v5._initial_chance(context,price))
 
     def test_all_hundred_digit_pairs_still_use_exactly_two_d10_draws(self):
         seen=set()
@@ -289,7 +291,7 @@ class ManagementV6Tests(unittest.TestCase):
                     public=self.store.execute(action,'I001',*(['100'] if action=='offer' else []))
                     self.assertIsNone(public['negotiation'])
                     self.assertEqual(public['roll_history'][0]['rules_version'],version)
-                    if action=='offer':self.assertEqual(public['roll_history'][-1]['rules_version'],6)
+                    if action=='offer':self.assertEqual(public['roll_history'][-1]['rules_version'],engine.TRADE_RULES_VERSION)
 
     def test_v5_used_ordinary_capacity_carries_even_after_item_sold(self):
         state=v5_fixture(1,price=9999);_legacy_v5.apply_command(state,'sell',['I001'])

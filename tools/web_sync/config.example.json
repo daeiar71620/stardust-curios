@@ -1,0 +1,14 @@
+{
+  "site_id": "COPY_VERIFIED_SITE_ID",
+  "site_url": "https://your-private-site.chatgpt.site",
+  "owner_private_verified": true,
+  "session_id": "example-new-session",
+  "session_epoch": 3,
+  "observation_version": 9,
+  "engine_path": "/absolute/game/engine.py",
+  "save_path": "/absolute/private/example-game.json",
+  "observation_path": "/absolute/private/example-game.observation.json",
+  "outbox_dir": "/absolute/private/example-sync-receipts",
+  "art_dir": "/absolute/private/example-known-art",
+  "renderer_path": "/absolute/game/spectator.py"
+}

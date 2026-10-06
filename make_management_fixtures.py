@@ -1,4 +1,4 @@
-"""Generate temporary current-schema observations of unchanged v6 trade rules."""
+"""Generate temporary current-schema observations of current v9 trade rules."""
 import copy
 import json
 from pathlib import Path
@@ -11,7 +11,7 @@ from test_percentile_v5 import fixture as old_fixture
 
 def generate(output_directory):
     root=Path(output_directory);root.mkdir(parents=True,exist_ok=True)
-    log=['# v8公开合成场景（v6交易规则）','', '均来自临时合成局。没有读取、复制或推进任何玩家存档；这里只保留公开投影。','']
+    log=['# v9公开合成场景（平滑初次预算）','', '均来自临时合成局。没有读取、复制或推进任何玩家存档；这里只保留公开投影。','']
     def save(name,public):
         # Deliberate defensive scan: public fixture may have ranges, never exact fields.
         text=json.dumps(public,ensure_ascii=False,indent=2)
@@ -44,7 +44,7 @@ def generate(output_directory):
         old=old_fixture(50,1);_legacy_v5.apply_command(old,'sell',['I001'])
         copied=engine.migrate_v5(json.dumps(old).encode());put(copied)
         save('grandfathered-v5-quote',store.execute('status'))
-        save('mixed-v5-v6',store.execute('offer','I001','9998'))
+        save('mixed-v5-v9',store.execute('offer','I001','9998'))
     (root/'PUBLIC_PLAYTHROUGH.md').write_text('\n'.join(log))
     print(f'{len(list(root.glob("*.json")))} public synthetic management fixtures: {root}')
 

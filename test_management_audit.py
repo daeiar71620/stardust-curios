@@ -97,7 +97,7 @@ class ManagementIndependentAudit(unittest.TestCase):
         _legacy_v5.apply_command(old, "decline", ["I001"])
         state = engine.migrate_v5(json.dumps(old).encode())
         duplicate = copy.deepcopy(state["roll_history"][0])
-        duplicate.update(id=2, item_id="I002", rules_version=6)
+        duplicate.update(id=2, item_id="I002", rules_version=engine.TRADE_RULES_VERSION)
         state["roll_history"].append(duplicate)
         state["roll_seq"] = 2
         state["last_event"]["roll"] = copy.deepcopy(duplicate)
@@ -340,7 +340,7 @@ class ManagementIndependentAudit(unittest.TestCase):
         result = self.store.execute("offer", "I001", "100")
         self.assertEqual(source.read_bytes(), before)
         self.assertEqual([row["id"] for row in result["roll_history"]], list(range(2, 62)))
-        self.assertEqual([row["rules_version"] for row in result["roll_history"]], [5] * 59 + [6])
+        self.assertEqual([row["rules_version"] for row in result["roll_history"]], [5] * 59 + [engine.TRADE_RULES_VERSION])
         self.assertEqual(result["roll_history"][:-1], old["roll_history"][1:])
         self.assertEqual(self.store.load()["management_upgrade"]["source_roll_seq"], 60)
         self.assertEqual(engine.GameStore(self.store.save_path).execute("status"), result)
@@ -371,7 +371,7 @@ class ManagementIndependentAudit(unittest.TestCase):
         state = self.store.load()
         self.assertEqual(state["roll_seq"], 66)
         self.assertEqual(len(state["roll_history"]), 60)
-        self.assertTrue(all(row["rules_version"] == 6 for row in state["roll_history"]))
+        self.assertTrue(all(row["rules_version"] == engine.TRADE_RULES_VERSION for row in state["roll_history"]))
         self.assertEqual(state["management_upgrade"]["source_roll_seq"], 1)
 
 
