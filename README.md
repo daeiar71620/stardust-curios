@@ -82,16 +82,18 @@ v1–v4分别使用 `import-v1` 至 `import-v4`。必须提供完整私档，公
 
 私档包含隐藏基价、精确预算、箱内物品及随机状态；玩家与画面只能读公开输出。这是接口约定，不是操作系统沙箱，不抵抗私档编辑或恢复备份。
 
-## 合成演示与验证
+## 验证与临时数据
 
 ```sh
-python3 spectator.py --observation management-fixtures/ready.json --demo
-python3 spectator.py --observation management-fixtures/negotiating.json --demo
 python3 -m unittest discover -v
+python3 make_dice_fixtures.py
+python3 make_management_fixtures.py
 python3 simulate_management_v6.py --games 50 --days 40
 ```
 
-`management-fixtures/` 是v6公开合成示例；`dice-fixtures/`保留v5历史公开示例。均不含玩家存档。1–5切页，←/→翻页，点击物品查看逐买家资格，点击骰卡查看历史，Esc关闭详情，F11全屏。
+自动化测试代码和合成数据生成器保留。测试所需场景在临时目录生成，结束后自动清理；直接运行两个生成器也只作临时验证。演示用假存档、公开投影、演练记录及截图不再放入仓库或发布包。真实存档独立保存，不属于演示清理范围。`management-simulation.json` 是有限样本的平衡统计报告，不是可载入的演示存档。
+
+观战器操作：1–5切页，←/→翻页，点击物品查看逐买家资格，点击骰卡查看历史，Esc关闭详情，F11全屏。
 
 详见 [店主手册](PLAY_GUIDE.md)、[观察schema](OBSERVATION_SCHEMA.md)、[QA报告](QA_REPORT.md)、[经营试验](BALANCE_REPORT.md)。仿真只测公开策略的有限样本，不等于真人体验或全策略平衡证明。
 

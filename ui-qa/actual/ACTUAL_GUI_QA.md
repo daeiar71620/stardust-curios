@@ -14,10 +14,9 @@ Focused new-feature checks passed. No blocking GUI defect found.
 - Grandfathered v5 quote, retested after the clarification patch: main card and quote detail explicitly state that v6 honors the v5 promised quote. The 9999 → 70 quote remains free to accept, with legal final-price range 71–9998 and a 71 example at 68% success. The inventory detail explicitly says the new pre-sale conditions do not revoke the existing quote and that new sales are temporarily unavailable.
 - Actual narrow resize to 390×812: ready sale detail, grandfathered main card, grandfathered sale detail, and grandfathered quote detail remain readable, without text overlap or clipped navigation. Wide verification used the actual 1180×812 window.
 
-## Evidence
+## Evidence handling
 
-- `ready-sale-detail-390.png`: actual 390-pixel-wide ready sale conditions
-- `grandfathered-quote-detail-390.png`: actual 390-pixel-wide preserved v5 quote detail after the clarification patch
+Actual 390-pixel-wide captures of the ready sale conditions and the preserved v5 quote detail were inspected during verification. The generated screenshots were removed after testing and are not distributed with this report.
 
 The desktop window manager initially imposed 1180×812 regardless of launch geometry; narrow coverage was established by actual mouse resizing, with window inventory confirming width 390.
 

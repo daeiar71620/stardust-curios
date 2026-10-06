@@ -1,4 +1,4 @@
-"""Generate only public v6 demo fixtures from temporary synthetic saves."""
+"""Generate temporary public v6 test observations from synthetic saves."""
 import copy
 import json
 from pathlib import Path
@@ -9,8 +9,8 @@ from test_management_v6 import fixture, named
 from test_percentile_v5 import fixture as old_fixture
 
 
-def main():
-    root=Path(__file__).with_name('management-fixtures');root.mkdir(exist_ok=True)
+def generate(output_directory):
+    root=Path(output_directory);root.mkdir(parents=True,exist_ok=True)
     log=['# v6公开合成场景','', '均来自临时合成局。没有读取、复制或推进任何玩家存档；这里只保留公开投影。','']
     def save(name,public):
         # Deliberate defensive scan: public fixture may have ranges, never exact fields.
@@ -47,6 +47,12 @@ def main():
         save('mixed-v5-v6',store.execute('offer','I001','9998'))
     (root/'PUBLIC_PLAYTHROUGH.md').write_text('\n'.join(log))
     print(f'{len(list(root.glob("*.json")))} public synthetic v6 fixtures: {root}')
+
+
+def main():
+    with tempfile.TemporaryDirectory(prefix='stardust-management-check-') as tmp:
+        generate(tmp)
+    print('Temporary management fixtures cleaned up.')
 
 
 if __name__=='__main__':main()

@@ -20,3 +20,12 @@ __pycache__/
 !/management-simulation.json
 /ui-qa/
 /ui-*-preview.png
+
+# Generated synthetic demonstrations are temporary test outputs, never releases.
+/dice-fixtures/
+/management-fixtures/
+**/PUBLIC_PLAYTHROUGH.md
+/demo-*/
+/*-demo.json
+/*-demo.png
+/*-demo.jpg

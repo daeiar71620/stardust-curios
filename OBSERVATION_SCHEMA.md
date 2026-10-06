@@ -113,7 +113,7 @@ Initial threshold:
 
 `clamp(floor(60 + bonus - 50 * log2(price / reference)))`
 
-Here `reference` is the item's private actual reference: `hidden_base_value * (0.30 + 0.007 * condition) * demand_multiplier`, using the day's multiplier only for the matching kind and 1 otherwise. A named customer's initial price above their exact private budget sets the threshold to 1. Ordinary travelers have no named-customer budget gate. The 01 exception still settles at the full legal price, including 9999.
+Here `reference` is the item's private actual reference: `hidden_base_value * (0.30 + 0.007 * condition) * demand_multiplier`, using the day's multiplier only for the matching kind and 1 otherwise. In v6, an initial price above the buyer's exact private budget sets the threshold to 1 for both named customers and ordinary travelers. The ordinary traveler's exact daily budget is committed privately within the public 60–120 range. Retained v5 ordinary-traveler records had no budget gate. The 01 exception still settles at the full legal price, including 9999.
 
 The formula is public; its private inputs and exact pre-roll initial probability are not. A committed initial record publishes its realized threshold and probability. Public item estimates instead use the catalog's nominal reference value in place of the hidden per-item base; they are not exact trade inputs.
 
@@ -233,4 +233,4 @@ Public v3/v4/v5 observations remain read-only historical inputs for the spectato
 
 Never expose `rng`, `base_value`, `cargo`, exact `budget`, private reference inputs, private serial counters, or private catalog IDs in public payloads. Public initial prices and value estimates use nominal catalog reference values, not the hidden per-item base roll. Public event/roll IDs are intentional identifiers, not private item/RNG counters. Diagnostic tools and deterministic tests may inspect synthetic fixtures; an AI playing an actual user game may not inspect private saves.
 
-`dice-fixtures/` contains synthetic public examples such as `critical01`, `fumble100`, `ordinary-success`, `negotiating`, `preview`, `final-success`, `final-failure`, `final-critical01`, `final-fumble100`, `accepted`, `declined`, `legacy-v3`, and `mixed-v4-v5`. They do not represent a played user game or prove UI/test verification by themselves.
+`make_dice_fixtures.py` and `make_management_fixtures.py` generate public synthetic test observations in temporary directories. Automated tests generate their own inputs and clean them up afterward. Generated demonstration observations, playthroughs, and screenshots are not distributed in the repository or release package. Test source and generators remain available; none of these fixtures represent a played user game.

@@ -1,4 +1,4 @@
-"""Headless UI checks; no game-engine import, display, or user save is needed."""
+"""Headless UI checks using isolated synthetic fixtures, never user saves."""
 import copy
 import json
 from pathlib import Path
@@ -274,7 +274,11 @@ class DiceRendererTests(unittest.TestCase):
             self.assertTrue(any('上次 D20 20' in word for word in self.renderer.words))
             self.assertNotIn('成交 9,999 星币',self.renderer.words)
     def test_engine_generated_public_samples_are_consistent_and_render(self):
-        directory=Path(__file__).with_name('dice-fixtures')
+        from make_dice_fixtures import generate
+        temporary=tempfile.TemporaryDirectory(prefix='stardust-spectator-test-')
+        self.addCleanup(temporary.cleanup)
+        directory=Path(temporary.name)
+        generate(directory)
         expected=['critical01','ordinary-success','negotiating','preview','accepted','declined',
                   'final-critical01','final-success','final-failure','final-fumble100','fumble100','legacy-v3','mixed-v4-v5']
         for name in expected:

@@ -1,4 +1,4 @@
-"""Generate intentional public demos, never real saves or default game files."""
+"""Generate temporary synthetic test observations, never real game files."""
 import json
 from pathlib import Path
 import tempfile
@@ -10,9 +10,9 @@ from test_percentile_v5 import fixture
 from test_dice_engine import fixture as old_fixture
 
 
-def main():
-    out = Path(__file__).with_name('dice-fixtures')
-    out.mkdir(exist_ok=True)
+def generate(output_directory):
+    out = Path(output_directory)
+    out.mkdir(parents=True, exist_ok=True)
     report = ['# v5 双D10合成公开演练', '',
         '全部由临时合成存档执行引擎命令生成，未读取或开始真实游戏。公开文件不含随机状态、真实基价或确切预算。', '']
     cases = [
@@ -63,6 +63,12 @@ def main():
                 f"骰史版本：{[row['rules_version'] for row in public['roll_history']]}", '']
     (out / 'PUBLIC_PLAYTHROUGH.md').write_text('\n'.join(report), encoding='utf-8')
     print(f'{len(cases)+2} public synthetic fixtures: {out}')
+
+
+def main():
+    with tempfile.TemporaryDirectory(prefix='stardust-dice-check-') as tmp:
+        generate(tmp)
+    print('Temporary dice fixtures cleaned up.')
 
 
 if __name__ == '__main__': main()

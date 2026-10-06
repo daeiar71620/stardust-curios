@@ -259,14 +259,7 @@ python3 engine.py --save /path/to/new-v6-copy.json continue
 
 点击骰卡查看本次十位骰、个位骰、合成百分骰与成功阈值。最近60次记录逐条按`rules_version`区分：v5/v6使用01大成功/100大失败，v3/v4历史使用原D20规则。接受还价后的实际收入看最新成交事件，旧骰留作历史。Esc关闭详情，所有交易仍由CLI执行。
 
-演示须明确加`--demo`，例如：
-
-```sh
-python3 spectator.py --observation dice-fixtures/negotiating.json --demo
-python3 spectator.py --observation management-fixtures/mixed-v5-v6.json --demo --journal-mode rolls
-```
-
-演示文件只含合成公开状态，不创建或迁移玩家存档。可用的场景包括01大成功、100大失败、待谈、预览、最终成功/失败/01、接受、谢绝与旧版混合历史。v6新样例位于management-fixtures，旧dice-fixtures作为v5历史展示保留。本版界面检查和测试结果见[QA报告](QA_REPORT.md)，旧版本记录不代表本版验收。
+如需临时 UI 核验，合成公开状态必须明确加`--demo`；测试后清理假存档、公开投影、演练记录和截图，不提交、不随发布包分发。生成器与自动化测试源码保留，测试在临时目录生成所需场景并自动清理，不读取或推进玩家真实存档。本版界面检查和测试结果见[QA报告](QA_REPORT.md)，旧版本记录不代表本版验收。
 
 从明确指定的公开状态导出截图：
 
