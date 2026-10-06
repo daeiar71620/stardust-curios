@@ -10,7 +10,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-import engine
+import _legacy_v5 as engine
 import _legacy_v1
 import _legacy_v2
 import _legacy_v3

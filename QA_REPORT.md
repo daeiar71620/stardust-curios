@@ -1,45 +1,34 @@
-# v5 Verification Report
+# v6 Verification Report
 
 Verified 2026-10-06 using isolated synthetic games and public-only UI fixtures.
-No private player save was read or modified, and no real game was imported or advanced. Original source releases remain separate. No repository push or deployment was performed.
+No private player save was read, copied, migrated or advanced. The v5 source release remains separate. No repository push or deployment was performed.
 
 ## Automated verification
 
-- Final aggregate: `python3 -m unittest discover -v` — **261 tests passed**, 27.057 seconds
-- `python3 -m py_compile *.py` — passed
-- Breakdown: 69 core/shop tests; 74 retained legacy D20/v4 regressions against the frozen `_legacy_v4` module; 24 native v5 tests; 28 independent percentile audit tests; 66 viewer/projection tests
-- The independent audit found no engine defects. Its focused checks used temporary synthetic saves only
+Final aggregate: `python3 -m unittest discover -q` — **331 tests passed**, 37.965 seconds. `python3 -m py_compile *.py` also passed. Breakdown: 69 current core/shop regressions; 74 frozen D20/v4 checks; 52 frozen v5 checks; 32 native v6 management tests; 21 independent v6 audit tests; and 83 viewer tests.
 
-Coverage includes all 100 ordered D10 digit pairs; the 00+0→100 convention; roll-low thresholds; 01 success at legal price 9999 beyond budget; 100 failure; exact final success counts across every possible result; native first-offer price sensitivity; final-premium monotonicity and ratio scaling; frozen percentage-point bonuses; public-only previews; deliberate lack of a second hidden final-budget gate; strict price bounds; free accept/decline; one paid retry; failed-quote expiry; RNG persistence; save-write rollback; projection recovery; competing final-offer locking; copy-only v1–v4 imports; retained D20 rule provenance; pending legacy counter preservation; and 60-record mixed-history boundaries.
+The CLI usage/error line printed during the suite is an intentional invalid-snapshot-path test; the aggregate result is OK.
 
-## Formula examples
+Coverage includes ordinary budget/capacity commitment; rejected-command atomicity; quota exhaustion across repricing, item changes, reads and process restarts; separate named customer limits; inclusive public price/condition boundaries; deterministic counter eligibility with no extra trade RNG draw; no exact budget/base/RNG leaks; 01 at 9999 despite ineligibility; 100 terminal; unchanged two D10 mapping and final premium arithmetic; free accept/decline and one 1-energy retry; public-preview equality; irrevocable final-failure expiry; frozen quote/bonus behavior; copy-only v1–v5 migration; inherited pending quotes; mixed history boundaries; next-day-only resets; and 65-day persisted-history retention.
 
-With zero bonus, final base chance is 70%:
+The independent audit found and prompted fixes for three damaged-save validation gaps: missing management metadata could reach a projection KeyError; impossible duplicate v6 ordinary visits were not counted per day; and import-version provenance was not cross-checked. These were corruption-hardening defects, not ways exposed by legal CLI actions. The added tests pass after fixes.
 
-- Counter 150 → final 165: 10% premium, threshold 58, exactly 58% success
-- Counter 150 → final 225: 50% premium, threshold 35, exactly 35% success
-- Counter 150 → final 9998: threshold 1, exactly 1% success
-- Packaged preview fixture counter 70 → final 100: 42.857% premium, threshold 37, exactly 37% success
+Write/race checks cover rollback on precommit failure with identical deterministic retry, committed fsync warnings, public-projection failure/recovery, competing ordinary sales, and competing accept/decline/final offers. Normal CLI use cannot refill a consumed ordinary visit or overwrite a committed result.
 
-Final arithmetic is integer `base * counter // (2 * price - counter)`, clamped to 1–99 after clamping the base. These probabilities include 01; 100 always fails.
+## Synthetic balance trial
 
-## Synthetic campaign smoke
+300 fresh synthetic campaigns: three public-only policies  × 50 seeds  × v5/v6, at most 40 days. The first useful parameter set was retained. Details, tails, bankruptcy and limitations are in [BALANCE_REPORT.md](BALANCE_REPORT.md); raw public-only metrics are in `management-simulation.json`.
 
-`python3 smoke_public_campaign.py` ran 30 independent synthetic 40-day campaigns using a public-observation-only shop policy. All 30 reached day 41; none became bankrupt. Across 4603 rolls there were 43 critical 01 results, 45 fumbles, and 637 accepted counteroffers. Ending cash ranged 5595–7819, median 6545. This is regression smoke, not a proof of economic balance or a recommendation for real play.
+This is not a claim of optimal-strategy or long-term economic balance. The preserved 1% 9999 miracle remains a profit lottery; no exploit-proof claim is made.
 
 ## Read-only viewer
 
-All 66 viewer tests passed, including new and legacy records, malformed public inputs, both D10 faces, combined results, low-roll thresholds, exact previews, mixed rule history, details/refresh/dismiss flows, and renderer sizes 1320×940, 760×1240, 390×844 and 320×568. The viewer has no gameplay controls and reads only public observations.
+83 viewer tests passed, including 17 new v6 checks. Ordinary capacity and budget are visible in the public status and visitor views. Item details page through public eligibility/reasons for every buyer. Eligibility is distinguished from buyer availability and initial success probability; exact hidden initial odds are not fabricated. Open details refresh when public price or capacity changes and close when the item disappears.
 
-Focused actual cloud-desktop GUI spot-check passed. The preview card and detail were readable at a native 390-pixel window width and both showed the correct 37% for the packaged preview. Critical 01 showed separate 00 and 1 faces, combined 01, and a 9999 sale. Fumble 100 showed separate 00 and 0 faces and failed even against threshold 99. The mixed journal and detail distinguished original v4 high-roll D20 rules from v5 low-roll D100 rules. Demonstration windows were closed and the pre-existing live spectator was restored; no gameplay or private-save access occurred. Native CUA captures were inspected but were not saved as local files.
+V3–v5 history remains labeled by its actual rules. Imported pending quotes are explicitly labeled as honored by v6 in both the card and detail; an item’s new-sale eligibility panel cannot be mistaken for revoking a previously promised quote. V6 uses the same roll-low D100 display and exact final-preview math. Wide and phone-sized renders were visually inspected; public PNGs directly under `ui-qa/` are headless verification renders, not player saves. Actual narrow-window captures and the sanitized focused report are separately labeled under `ui-qa/actual/`.
 
-Packaged PNGs in `ui-qa/` are public-only headless renders:
-
-- `preview-narrow.png`: packaged counter 70/proposed 100/37% preview at 390×930
-- `fumble100-wide.png`:00+0→100 at 1320×940
-- `mixed-history-wide.png`: original v4 D20 and new v5 D100 records at 1320×940
-- `ten-percent-example-narrow.png`: a separate, explicitly synthetic UI specimen showing counter 150/proposed 165/58%; it is not a player save
+Actual cloud GUI spot-check passed at 1180×812 and 390×812: ordinary remaining 1/1 and budget 60–120; reasonable, 9999 and poor-condition eligibility; buyer paging; quota-used 0/1 with ordinary buyers unavailable; departure event reasons, zero income and retained item without a fake counter; pending and accepted states; and grandfathered v5 quote messaging. The old quote card/detail explicitly honored the 70 counter, showed legal final range 71–9998 and the 71 example’s 68% chance. The negotiating item panel clearly stated that new conditions do not revoke the promised quote. Text and navigation were readable with no clipping or overlap. All inspected v6 windows were explicit public synthetic demos. Actual narrow-window screenshots are packaged under `ui-qa/actual/`; other PNGs are separate headless renders. Demonstration windows were closed and the pre-existing non-demo spectator was restored visually unchanged. The release report omits all personal game-state values.
 
 ## Distribution boundary
 
-The release contains source, frozen legacy validators, documentation, tests, 13 intentional public JSON fixtures, their generated playthrough, and public-only screenshots. It excludes private saves, root observation files, backups, locks, runtime caches, personal state, and environment credentials. Opening the spectator does not create or migrate a game. v1–v4 imports require an explicit command and a new target path; the historical game remains untouched.
+The release contains source, frozen legacy validators, docs, tests, 16 v6 and 13 retained v5 intentional public fixtures, generators, synthetic aggregate statistics and public screenshots. It excludes private saves, ordinary root observations, backups, locks, runtime caches, personal state, and credentials. Root JSON exceptions contain only deliberate simulation metrics. Opening the spectator does not create or migrate a game; v1–v5 imports require an explicit command and a new target path.

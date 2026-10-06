@@ -195,8 +195,7 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(public["credits"], before["credits"])
         self.assertNotEqual(self.load()["rng"], before["rng"])
         self.assert_rejected_unchanged("sell", item_id)
-        self.assert_rejected_unchanged("price", item_id, "1")
-        self.store.execute("decline", item_id)
+        self.assertIsNone(public["negotiation"])  # Outrageous asks no longer guarantee a counter.
         self.store.execute("price", item_id, "1")
         self.assert_rejected_unchanged("sell", item_id)
         self.store.execute("endday")
@@ -333,6 +332,7 @@ class EngineTests(unittest.TestCase):
         distinct.update(id="I888", collected=True, price=100)
         state["collection"].append(distinct)
         state.update(day=7, credits=664)
+        state["walkins"]["day"] = 7
         engine._atomic_json(self.path, state)
         won = self.store.execute("endday")
         self.assertEqual((won["phase"], won["credits"]), ("week_summary", 650))

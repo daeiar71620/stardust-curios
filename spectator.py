@@ -64,7 +64,7 @@ def safe_color(value, fallback=TEAL):
 
 def percentile_rules(value):
     source = as_dict(value)
-    return (source.get('rules_version') == 5 or source.get('die') == 'D100'
+    return (source.get('rules_version') in (5, 6) or source.get('die') == 'D100'
             or 'tens' in source or 'ones' in source)
 
 
@@ -118,9 +118,80 @@ def roll_status(roll, negotiation=None):
 
 def roll_rules_label(roll):
     if percentile_rules(roll):
-        return 'v5 · D100 低骰规则'
+        version = public_integer(roll.get('rules_version'), 5, 6) or 5
+        return f'v{version} · D100 低骰规则'
     version = public_integer(roll.get('rules_version'), 3, 4) or 3
     return f'v{version} · D20 原高骰规则'
+
+
+def public_budget_range(value):
+    pair = as_list(value)
+    if len(pair) != 2:
+        return []
+    result = [public_integer(v, 0, 10**9) for v in pair]
+    return result if None not in result and result[0] <= result[1] else []
+
+
+def public_walkins(value):
+    """Project public visit limits; never read a customer's actual budget."""
+    source = as_dict(value)
+    if not source:
+        return {}
+    result = {key: public_integer(source.get(key), 0, 10**9)
+              for key in ('daily_limit', 'used', 'remaining')}
+    result['budget_range'] = public_budget_range(source.get('budget_range'))
+    result['min_condition'] = public_integer(source.get('min_condition'), 0, 100)
+    result['visit_rule'] = source.get('visit_rule') if isinstance(source.get('visit_rule'), str) else None
+    return result
+
+
+def public_sale_option(value):
+    """Forecasts contain public eligibility, not initial odds or private budgets."""
+    source = as_dict(value)
+    if not source:
+        return {}
+    result = {key: source.get(key) if isinstance(source.get(key), str) else None
+              for key in ('customer_id', 'customer_name', 'warning')}
+    for key in ('available', 'counter_eligible', 'preference_match', 'condition_met'):
+        result[key] = source.get(key) if isinstance(source.get(key), bool) else None
+    for key in ('public_reference', 'max_counter_ask', 'ask'):
+        result[key] = public_integer(source.get(key), 0, 10**9)
+    result['min_condition'] = public_integer(source.get('min_condition'), 0, 100)
+    result['budget_range'] = public_budget_range(source.get('budget_range'))
+    result['reasons'] = [v for v in as_list(source.get('reasons')) if isinstance(v, str)]
+    return result
+
+
+def public_sale_detail(item, walkins, page=0):
+    source = as_dict(item)
+    fields = ('id', 'name', 'kind', 'rarity', 'color', 'condition', 'price',
+              'description', 'negotiating', 'public_reference')
+    result = {key: source.get(key) for key in fields}
+    result.update(_view='sale', _sale_page=max(0, int(number(page))),
+                  sale_options=[public_sale_option(v) for v in as_list(source.get('sale_options')) if as_dict(v)],
+                  walkins=public_walkins(walkins))
+    return result
+
+
+def walkins_summary(value):
+    visits = public_walkins(value)
+    if not visits:
+        return '普通散客 · 等待公开名额'
+    remaining, limit = visits.get('remaining'), visits.get('daily_limit')
+    amount = f'{remaining}/{limit} 次' if remaining is not None and limit is not None else '等待公开名额'
+    budget = visits.get('budget_range')
+    money = f' · 预算 {budget[0]}–{budget[1]}' if budget else ' · 预算待公开'
+    return f'散客剩余 {amount}{money}'
+
+
+def sale_status(option):
+    if option.get('available') is False:
+        return '当前不可出售', MUTED
+    if option.get('available') is not True or option.get('counter_eligible') is None:
+        return '等待完整公开条件', MUTED
+    if option.get('counter_eligible'):
+        return '普通失败可还价', TEAL
+    return '普通失败直接离开', RED
 
 
 def roll_summary(roll):
@@ -194,6 +265,15 @@ def public_negotiation(value):
 def has_bargaining_preview(value):
     source = as_dict(value)
     return bool(source) and any(key in source for key in ('preview', 'final_offer_bounds', 'rejection_penalty'))
+
+
+def honored_quote_label(value):
+    """A migrated, already-promised quote keeps its original commitment."""
+    source=as_dict(value)
+    origin=public_integer(source.get('origin_rules_version'),3,5)
+    if source.get('rules_version')==6 and origin is not None:
+        return f'v6 继续履行 v{origin} 已承诺还价'
+    return None
 
 
 def has_roll_breakdown(roll):
@@ -615,6 +695,7 @@ class Renderer:
     def bargaining_card(self, box, o, *, details=False):
         x,y,w,h=box
         pending=public_negotiation(o.get('negotiation'))
+        honored=honored_quote_label(pending)
         roll=public_roll(o.get('last_roll') or as_dict(o.get('last_event')).get('roll'))
         preview=as_dict(pending.get('preview'));bounds=as_dict(pending.get('final_offer_bounds'))
         ranges=preview_ranges(preview);percentile=percentile_preview(preview)
@@ -645,7 +726,7 @@ class Renderer:
             income=int(number(preview.get('success_income'),price))
             self.text((x+18,y+267),f'再报价：{energy:g} 体力 · 成功收入 {income:,}',17,INK,False,w-36)
             self.text((x+18,y+294),f'失败收入 0 · 失去 {offer:,} 星币还价',17,RED,True,w-36)
-            self.text((x+18,y+h-24),'公开还价精确预览 · 越低越好 · 不掷骰',13,MUTED,False,w-36)
+            self.text((x+18,y+h-24),honored or '公开还价精确预览 · 越低越好 · 不掷骰',13,LILAC if honored else MUTED,False,w-36)
         elif preview and ranges:
             price=int(number(preview.get('price')))
             example=preview.get('suggested')
@@ -666,12 +747,13 @@ class Renderer:
             self.text((x+18,y+156),'没有合法的最终报价',22,RED,True,w-36)
             self.text((x+18,y+194),'报价须高于还价，并低于初次标价',18,INK,False,w-36)
             self.text((x+18,y+226),'可以接受还价，或免费谢绝',18,MUTED,False,w-36)
-            self.text((x+18,y+h-27),'只读观战 · 不会替店主作决定',14,MUTED,False,w-36)
+            self.text((x+18,y+h-27),honored or '只读观战 · 不会替店主作决定',14,LILAC if honored else MUTED,False,w-36)
         else:
             self.text((x+18,y+156),'等待公开报价预览',22,GOLD,True,w-36)
             self.text((x+18,y+194),'公开数据不足，暂不推算骰点或难度',17,MUTED,False,w-36)
             self.text((x+18,y+232),f'再报价：{number(pending.get("final_offer_energy"),1):g} 体力',18,INK,False,w-36)
             self.text((x+18,y+267),f'失败收入 0 · 失去 {offer:,} 星币还价',17,RED,True,w-36)
+            if honored:self.text((x+18,y+h-24),honored,13,LILAC,False,w-36)
         if not details:
             self.hits.append(((x,y,x+w,y+h),('inspect',dict(_view='negotiation',negotiation=pending,last_roll=roll))))
             self.hits.append(((x+w-153,y+5,x+w,y+47),('show_rolls',None)))
@@ -696,7 +778,12 @@ class Renderer:
         fallback=('基于公开还价的精确几率；最终失败收入0，不能回头接受旧还价。' if unit
                   else '预览只使用公开区间；实际难度在最终报价落骰后公开。')
         self.text((x+27,y+525),preview.get('warning') or fallback,17,MUTED,False,w-54,3)
-        if unit:
+        honored=honored_quote_label(pending)
+        if honored:
+            origin=public_integer(pending.get('origin_rules_version'),3,5)
+            caption=honored+(' · 原D20加值×5' if origin in (3,4) else '')
+            self.text((x+27,y+599),caption,15,LILAC,True,w-54)
+        elif unit:
             origin=public_integer(pending.get('origin_rules_version'),3,4)
             caption=f'已由 v{origin} 迁移 · 原 D20 加值 ×5 个百分点' if origin else 'CoC 启发的简化房规，并非完整官方规则'
             self.text((x+27,y+599),caption,15,MUTED,False,w-54)
@@ -762,7 +849,10 @@ class Renderer:
         label=demand.get('label') or '行情平稳'
         self.star(x+11,y+17,6,TEAL)
         self.text((x+27,y+6),f'今日行情  ·  {label}',19,TEAL,False,w-27)
-        if daily:
+        if number(o.get('version')) >= 6 and as_dict(o.get('walkins')):
+            self.text((x+2,y+37),walkins_summary(o.get('walkins'))+' · 查看来客 ›',17,MUTED,False,w-4)
+            self.hits.append(((x,y+30,x+w,y+h),('tab','visitors')))
+        elif daily:
             label=daily.get('title') or daily.get('name') or daily.get('text','')
             self.text((x+2,y+37),f'星港传闻  {label}',18,MUTED,False,w-4)
             self.hits.append(((x,y+30,x+w,y+h),('inspect',dict(daily,name=label))))
@@ -781,7 +871,8 @@ class Renderer:
         x,y,w,h=box
         items=as_list(o.get('collection' if collection else 'inventory'))
         capacity=o.get('capacity',len(items))
-        title='私藏的星光' if collection else '正在等待新主人的旧物'
+        forecasts=not collection and number(o.get('version')) >= 6
+        title='私藏的星光' if collection else ('旧物货架 · 点击查看售前条件' if forecasts else '正在等待新主人的旧物')
         self.text((x+2,y+6),title,22,INK,True)
         extra=f'{len(items)} 件珍藏' if collection else f'{len(items)} / {capacity} 件'
         self.text((x+w-2,y+10),extra,17,MUTED,anchor='rt')
@@ -811,8 +902,15 @@ class Renderer:
             self.text((x+w-16,yy+15),price_text,19,GOLD,True,anchor='rt')
             detail=f"{rarity} · {KINDS.get(item.get('kind'),'旧物')}"
             if not collection:detail+=(' · 还价中' if item.get('negotiating') else f" · 品相 {int(number(item.get('condition')))}%")
+            if forecasts and not item.get('negotiating'):
+                ordinary=next((public_sale_option(v) for v in as_list(item.get('sale_options'))
+                               if as_dict(v) and v.get('customer_id') is None),{})
+                status,status_color=sale_status(ordinary)
+                detail=f"品相 {int(number(item.get('condition')))}% · 散客：{status}"
+                col=status_color
             self.text((tx,yy+48),detail,16,col,False,w-(tx-x)-20)
-            self.hits.append(((x,yy,x+w,yy+row_h-9),('inspect',item)))
+            display=public_sale_detail(item,o.get('walkins')) if forecasts else item
+            self.hits.append(((x,yy,x+w,yy+row_h-9),('inspect',display)))
         self.pagination((x,y+h-30,w,30), page, pages)
 
     def pagination(self, box, page, pages):
@@ -885,7 +983,8 @@ class Renderer:
             self.text((tx,yy+10),label,21,color,True,w-190)
             stage='最终议价' if roll.get('stage')=='final' else '初次报价'
             self.text((x+w-13,yy+14),f'第 {int(number(roll.get("day"),1))} 天',14,MUTED,anchor='rt')
-            rules='v5 低骰' if percentile_rules(roll) else roll_rules_label(roll)
+            rules=(f'v{public_integer(roll.get("rules_version"),5,6) or 5} 低骰'
+                   if percentile_rules(roll) else roll_rules_label(roll))
             self.text((tx,yy+43),f'{rules} · {stage} · {roll.get("customer_name") or "旅客"} · {roll.get("item_name") or "旧物"}',15,INK,False,w-105)
             self.text((tx,yy+70),roll_math(roll),14,MUTED,False,w-105)
             self.hits.append(((x,yy,x+w,yy+rowh-8),('inspect',dict(roll,_view='roll'))))
@@ -920,9 +1019,16 @@ class Renderer:
     def visitors(self, box, o):
         x,y,w,h=box
         visitors=[as_dict(v) for v in as_list(o.get('visitors'))]
+        walkins=public_walkins(o.get('walkins')) if number(o.get('version')) >= 6 else {}
         waiting=sum(v.get('status') in ('waiting','negotiating') for v in visitors)
+        if walkins:
+            budget=walkins.get('budget_range')
+            visitors.insert(0,{'name':'普通散客','_view':'walkins','walkins':walkins,
+                              'role':f'公开预算 {budget[0]}–{budget[1]} 星币' if budget else '等待公开预算范围',
+                              'preference_label':f'还价需品相 ≥{walkins["min_condition"]}%' if walkins.get('min_condition') is not None else '等待公开品相条件',
+                              'status':'waiting' if number(walkins.get('remaining'))>0 else 'left'})
         self.text((x+2,y+5),'今天谁推开了店门',22,INK,True,w-120)
-        self.text((x+w-2,y+9),f'{waiting} 位等候',17,TEAL,anchor='rt')
+        self.text((x+w-2,y+9),f'{waiting} 位专客' if walkins else f'{waiting} 位等候',17,TEAL,anchor='rt')
         per_page=max(1,int((h-64)/109));pages=max(1,math.ceil(len(visitors)/per_page));page=self.page%pages;self.page_count=pages
         for i,v in enumerate(visitors[page*per_page:(page+1)*per_page]):
             yy=y+45+i*109
@@ -933,11 +1039,14 @@ class Renderer:
             self.ellipse((x+33,yy+40,x+39,yy+46),GOLD);self.ellipse((x+52,yy+40,x+58,yy+46),GOLD)
             self.text((x+93,yy+12),v.get('name','星港旅客'),23,INK,True,w-220)
             status={'waiting':'正在等候','negotiating':'还价中','bought':'满载而归','left':'暂别小店'}.get(v.get('status'),'来店看看')
+            if v.get('_view')=='walkins':
+                remaining=walkins.get('remaining')
+                status=f'今日剩 {remaining} 次' if remaining is not None else '名额待公开'
             self.text((x+w-16,yy+16),status,17,LILAC if v.get('status')=='negotiating' else TEAL if v.get('status')=='waiting' else MUTED,anchor='rt')
             self.text((x+93,yy+45),v.get('role','星港旅客'),16,GOLD,False,w-108)
             self.text((x+93,yy+71),v.get('preference_label',''),16,MUTED,False,w-108)
             budget=as_list(v.get('budget_range'))
-            desc=v.get('preference_label','')+(f"。公开预算 {budget[0]}–{budget[-1]} 星币。" if len(budget)>1 else '')
+            desc=str(v.get('preference_label') or '')+(f"。公开预算 {budget[0]}–{budget[-1]} 星币。" if len(budget)>1 else '')
             self.hits.append(((x,yy,x+w,yy+99),('inspect',dict(v,description=desc))))
         if not visitors:self.text((x+18,y+65),'门口风铃静静响，下一位旅客还在路上',20,MUTED,False,w-36,2)
         self.pagination((x,y+h-28,w,28),page,pages)
@@ -945,6 +1054,8 @@ class Renderer:
     def detail_card(self, item):
         if item.get('_view')=='roll':return self.roll_detail(item)
         if item.get('_view')=='negotiation':return self.bargaining_detail(item)
+        if item.get('_view')=='sale':return self.sale_detail(item)
+        if item.get('_view')=='walkins':return self.walkins_detail(item)
         overlay=Image.new('RGBA',self.image.size,(6,16,24,210))
         self.image=Image.alpha_composite(self.image.convert('RGBA'),overlay).convert('RGB')
         self.draw=ImageDraw.Draw(self.image)
@@ -956,6 +1067,88 @@ class Renderer:
         self.item_art(x+w/2-64,y+71,128,item)
         self.text((x+w/2,y+220),item.get('name','小店档案'),32,INK,True,w-50,1,anchor='mt')
         self.text((x+31,y+284),item.get('description') or '这件旧物的故事，还在慢慢展开。',23,MUTED,False,w-62,5)
+
+    def sale_detail(self, source):
+        """Public pre-sale conditions only; clicking never attempts a sale."""
+        item=public_sale_detail(source,source.get('walkins'),source.get('_sale_page'))
+        overlay=Image.new('RGBA',self.image.size,(6,16,24,225))
+        self.image=Image.alpha_composite(self.image.convert('RGBA'),overlay).convert('RGB');self.draw=ImageDraw.Draw(self.image)
+        w=min(self.W-40,710);h=min(self.H-48,920);x=(self.W-w)/2;y=(self.H-h)/2
+        self.rect((x,y,x+w,y+h),'#263d45',25,TEAL,2)
+        self.hits=[((0,0,self.W,self.H),('close',None))]
+        self.text((x+24,y+23),'售前公开条件 · 逐位查看',20,TEAL,True,w-152)
+        self.text((x+w-22,y+27),'点击返回 ×',16,MUTED,anchor='rt')
+        self.item_art(x+22,y+64,67,item)
+        self.text((x+105,y+68),item.get('name') or '未命名旧物',24,INK,True,w-131)
+        price=public_integer(item.get('price'),0,10**9)
+        reference=public_integer(item.get('public_reference'),0,10**9)
+        self.text((x+105,y+107),f'标价 {price if price is not None else "?"} · 公开参考价 {reference if reference is not None else "?"}',17,GOLD,False,w-131)
+        if item.get('negotiating'):
+            self.text((x+24,y+150),'已有还价请按待谈面板处理；新售前条件不撤销已承诺还价',16,LILAC,True,w-48,2)
+        else:self.text((x+24,y+150),item.get('description') or '这件旧物的故事，还在慢慢展开。',16,MUTED,False,w-48,2)
+        self.line([(x+24,y+198),(x+w-24,y+198)],LINE,1)
+        self.text((x+24,y+213),walkins_summary(item.get('walkins')),17,TEAL,True,w-48)
+        options=item['sale_options'];count=len(options);page=item['_sale_page']%max(1,count)
+        if not options:
+            self.text((x+24,y+274),'等待公开售前条件',25,GOLD,True,w-48)
+            self.text((x+24,y+326),'公开数据不足，暂不推算还价资格或初次成功率。',18,MUTED,False,w-48,3)
+        else:
+            option=options[page];status,color=sale_status(option)
+            if item.get('negotiating'):status,color='已有还价 · 暂不接待新出售',LILAC
+            name=option.get('customer_name') or '旅客'
+            suffix=' · 普通散客' if option.get('customer_id') is None else ' · 特邀顾客'
+            self.text((x+24,y+260),name+suffix,25,INK,True,w-48)
+            self.text((x+24,y+300),status,22,color,True,w-48)
+            budget=option.get('budget_range')
+            self.text((x+24,y+339),f'公开预算 {budget[0]}–{budget[1]} 星币' if budget else '等待公开预算范围',18,GOLD,False,w-48)
+            maximum=option.get('max_counter_ask')
+            cap=(f'还价标价范围：2–{maximum} 星币' if maximum is not None and maximum>=2
+                 else '没有合法还价标价空间' if maximum is not None else '等待公开还价标价上限')
+            self.text((x+24,y+373),cap,18,INK,True,w-48)
+            self.text((x+24,y+404),'须同时不高于参考价的125%及公开预算上限',16,MUTED,False,w-48,2)
+            minimum=option.get('min_condition')
+            condition='达标' if option.get('condition_met') is True else '未达标' if option.get('condition_met') is False else '待公开'
+            preference='匹配' if option.get('preference_match') is True else '不匹配' if option.get('preference_match') is False else '待公开'
+            terms=f'品相 ≥{minimum if minimum is not None else "?"}%（{condition}）'
+            if option.get('customer_id') is not None:terms+=f' · 偏好{preference}'
+            self.text((x+24,y+446),terms,17,INK,False,w-48,2)
+            reasons=option.get('reasons')
+            reason_text=('不符：'+'；'.join(reasons)) if reasons else ('公开还价条件均符合' if option.get('counter_eligible') is True else '等待完整公开还价条件')
+            self.text((x+24,y+492),reason_text,16,RED if reasons else MUTED,False,w-48,5)
+            warning=option.get('warning') or '初次正式出售消耗1体力，并占用该买家与该货今日接待；普通失败是否还价取决于公开条件。'
+            self.text((x+24,y+604),warning,16,INK,False,w-48,6)
+            self.text((x+24,y+738),'若直接离店：收入0，货物留下\n还价资格非成交保证；初次精确成功率不公开',16,MUTED,False,w-48,2)
+            self.text((x+24,y+785),'01 仍可奇迹成交（1%）· 100 直接离店（1%）',16,GOLD,False,w-48,2)
+        footer=y+h-58
+        self.line([(x+24,footer-12),(x+w-24,footer-12)],LINE,1)
+        if count>1:
+            self.text((x+w/2,footer),f'买家 {page+1}/{count} · 只读条件',16,MUTED,anchor='mt')
+            self.text((x+24,footer),'‹ 上一位',17,TEAL,True)
+            self.text((x+w-24,footer),'下一位 ›',17,TEAL,True,anchor='rt')
+            self.hits.extend([((x+12,footer-7,x+w*.29,footer+29),('sale_page',-1)),
+                              ((x+w*.71,footer-7,x+w-12,footer+29),('sale_page',1))])
+        else:self.text((x+w/2,footer),'只读条件 · 不会掷骰或完成交易',16,MUTED,anchor='mt')
+
+    def walkins_detail(self, source):
+        visits=public_walkins(source.get('walkins'))
+        overlay=Image.new('RGBA',self.image.size,(6,16,24,220))
+        self.image=Image.alpha_composite(self.image.convert('RGBA'),overlay).convert('RGB');self.draw=ImageDraw.Draw(self.image)
+        w=min(self.W-40,670);h=670;x=(self.W-w)/2;y=(self.H-h)/2
+        self.rect((x,y,x+w,y+h),'#263d45',25,TEAL,2)
+        self.hits=[((0,0,self.W,self.H),('close',None))]
+        self.text((x+24,y+24),'普通散客 · 今日接待',23,TEAL,True,w-150)
+        self.text((x+w-22,y+29),'点击返回 ×',16,MUTED,anchor='rt')
+        self.text((x+24,y+89),walkins_summary(visits),23,GOLD,True,w-48,2)
+        used=visits.get('used')
+        self.text((x+24,y+158),f'今日已用 {used if used is not None else "?"} 次 · 次日重置',20,INK,True,w-48)
+        rule=visits.get('visit_rule') or '正式出售无论成交、还价或离店都占用名额；改价、换货或重启不刷新，次日重置。'
+        self.text((x+24,y+208),rule,19,MUTED,False,w-48,4)
+        self.text((x+24,y+321),'正式出售花1体力；无效指令不占名额',19,INK,False,w-48,2)
+        minimum=visits.get('min_condition')
+        self.text((x+24,y+380),f'还价需品相 ≥{minimum if minimum is not None else "?"}%，且符合公开标价条件',18,INK,False,w-48,2)
+        self.text((x+24,y+441),'普通失败可能直接离店，收入0；货物留下，今日不能换客重试。',18,RED,False,w-48,3)
+        self.text((x+24,y+529),'预算仅公布范围，不保证买得起标价；01仍可奇迹成交。',18,GOLD,False,w-48,3)
+        self.text((x+24,y+h-35),'在货架点击旧物，可逐位查看出售条件',16,MUTED,False,w-48)
 
     def roll_detail(self, source):
         roll=public_roll(source)
@@ -1123,13 +1316,25 @@ class Spectator:
             elif action[0]=='show_rolls':self.set_tab('journal');self.journal_mode='rolls'
             elif action[0]=='journal_mode':self.journal_mode=action[1];self.page=0;self.last_signature=None
             elif action[0]=='inspect':self.detail=action[1];self.last_signature=None
+            elif action[0]=='sale_page' and as_dict(self.detail).get('_view')=='sale':
+                count=len(as_list(self.detail.get('sale_options')))
+                self.detail=dict(self.detail,_sale_page=(int(number(self.detail.get('_sale_page')))+action[1])%max(1,count))
+                self.last_signature=None
             elif action[0]=='close':self.detail=None;self.last_signature=None
 
     def refresh_detail(self):
         """A projection refresh must not leave a live quote looking current."""
         detail=as_dict(self.detail)
         pending=as_dict(as_dict(self.reader.observation).get('negotiation'))
-        if detail.get('_view')=='negotiation':
+        if detail.get('_view')=='sale':
+            observation=as_dict(self.reader.observation)
+            item=next((v for v in as_list(observation.get('inventory'))
+                       if as_dict(v) and v.get('id')==detail.get('id')),None)
+            self.detail=public_sale_detail(item,observation.get('walkins'),detail.get('_sale_page')) if item else None
+        elif detail.get('_view')=='walkins':
+            visits=public_walkins(as_dict(self.reader.observation).get('walkins'))
+            self.detail=dict(_view='walkins',walkins=visits) if visits else None
+        elif detail.get('_view')=='negotiation':
             previous=as_dict(detail.get('negotiation'))
             if not pending or pending.get('item_id')!=previous.get('item_id'):
                 self.detail=None

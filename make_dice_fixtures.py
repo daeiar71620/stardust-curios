@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 import tempfile
 
-import engine
+import _legacy_v5 as engine
 import _legacy_v3
 import _legacy_v4
 from test_percentile_v5 import fixture

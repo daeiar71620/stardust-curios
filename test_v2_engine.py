@@ -91,7 +91,7 @@ class ExpansionTests(unittest.TestCase):
         self.store.execute("price", item, "9999")
         obs = self.store.execute("sell", item, visitor["id"])
         self.assertTrue(obs["inventory"][0]["sale_attempted_today"])
-        self.assertEqual(next(v for v in obs["visitors"] if v["id"] == visitor["id"])["status"], "negotiating")
+        self.assertEqual(next(v for v in obs["visitors"] if v["id"] == visitor["id"])["status"], "left")
         self.assertNotIn('"budget":', json.dumps(obs))
         self.reject("sell", item)
         self.reject("sell", item, "unknown")
@@ -160,6 +160,7 @@ class ExpansionTests(unittest.TestCase):
     def test_milestones_persist_even_when_cash_is_spent(self):
         state = self.store.load()
         state.update(day=8, credits=1500, first_week_result="won", reputation=12)
+        state["walkins"]["day"] = 8
         state["upgrades"].update(workbench=1, shelf=1)
         for index, row in enumerate(engine.CATALOG[:5]):
             item = dict(catalog_id=row[0], name=row[1], rarity=row[2], kind=row[3], base_value=row[4], description=row[5],

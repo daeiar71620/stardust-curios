@@ -54,6 +54,7 @@ class V2AuditTests(unittest.TestCase):
     def prepare_week(self, credits, won=False):
         state = self.store.load()
         state.update(day=7, credits=credits, daily_event=copy.deepcopy(engine.EVENTS[0]))
+        state["walkins"]["day"] = 7
         if won:
             state["collection"] = [self.synthetic_item(key, f"I{i:03}", True)
                                    for i, key in enumerate(("wrench", "lamp"), 1)]
@@ -126,6 +127,7 @@ class V2AuditTests(unittest.TestCase):
     def test_bankruptcy_does_not_offer_continue(self):
         state = self.store.load()
         state.update(day=7, credits=13)
+        state["walkins"]["day"] = 7
         self.write(state)
         public = self.store.execute("endday")
         self.assertEqual((public["phase"], public["credits"]), ("lost", 0))
@@ -261,11 +263,10 @@ class V2AuditTests(unittest.TestCase):
         visitor = self.store.load()["visitors"][0]["id"]
         self.store.execute("price", "I001", "9999")
         public = self.store.execute("sell", "I001", visitor)
-        self.assertEqual(next(v for v in public["visitors"] if v["id"] == visitor)["status"], "negotiating")
+        self.assertEqual(next(v for v in public["visitors"] if v["id"] == visitor)["status"], "left")
         self.reject_unchanged("sell", "I002", visitor)
         self.reject_unchanged("sell", "I001")
-        self.reject_unchanged("price", "I001", "1")
-        self.store.execute("decline", "I001")
+        self.assertIsNone(public["negotiation"])
         self.store.execute("price", "I001", "1")
         self.reject_unchanged("sell", "I001")
         public = self.store.execute("endday")

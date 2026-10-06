@@ -15,7 +15,8 @@ __pycache__/
 /backups/
 /saves/
 /screenshots/
-# All root JSON files are local game saves / observations in this project.
+# Root JSON files default to private runtime data; one explicit synthetic report is public.
 /*.json
+!/management-simulation.json
 /ui-qa/
 /ui-*-preview.png

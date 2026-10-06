@@ -20,11 +20,7 @@ import sys
 import tempfile
 from contextlib import contextmanager
 
-VERSION = 6
-WALKIN_DAILY_LIMIT = 1
-WALKIN_BUDGET_RANGE = (60, 120)
-WALKIN_MIN_CONDITION = 45
-COUNTER_MAX_RATIO = (5, 4)
+VERSION = 5
 TOTAL_DAYS = 7
 DEFAULT_SAVE = Path(__file__).resolve().with_name("save.json")
 GOAL = {"credits": 650, "collection": 2}
@@ -119,7 +115,6 @@ HELP = """星屑杂货铺 · 七天首周，长期经营
   upgrade workbench|shelf|display  升级，2精力，每项3级
   endday                    支付当日维护费，推进日期
   continue                  首周结算后明确继续到第8天；不重开、不再扣第7天费用
-  import-v5 原存档路径       只读百分骰版并复制至新的 --save 路径；旧还价仍兑现
   import-v4 原存档路径       只读还价版并复制至新的 --save 路径；历史D20不重判
   import-v3 原存档路径       只读掷骰版并复制至新的 --save 路径；不重掷
   import-v2 原存档路径       只读扩展版并升级至新的 --save 路径；原文件不变
@@ -133,8 +128,7 @@ HELP = """星屑杂货铺 · 七天首周，长期经营
 双D10分别取十位00–90和个位0–9；00+0记100。掷低点：01大成功、100大失败。
 01一见钟情突破普通意愿与预算，按合法报价成交；100立即结束接待。
 最终成功率按相对还价涨幅下降，无固定拒价惩罚。这是CoC启发的简化房规。
-普通失败只在公开标价/偏好/品相条件满足时还价，否则离店。旅客每天1位，预算60–120，尝试即占用。
-inspect/status 免费显示还价资格和原因；01仍无视预算及还价资格。待谈时锁定该货；endday自动谢绝。
+普通失败给一次还价，待谈时锁定该货；endday自动谢绝未完成谈判。
 公开observation不包含箱内货物、真实基价、买家确切预算或随机状态。
 """
 
@@ -209,55 +203,6 @@ def _make_visitors(rng, state):
     return visitors
 
 
-def _make_walkins(rng, day):
-    # Domain-separated deterministic budget. Does not consume the main game RNG,
-    # so copying/reopening cannot refresh capacity or advance a future trade roll.
-    material = json.dumps(rng.getstate(), separators=(",", ":")).encode()
-    local = random.Random(hashlib.sha256(b"walkin-v6:" + str(day).encode() + b":" + material).digest())
-    return {"day": day, "used": 0, "budget": local.randint(*WALKIN_BUDGET_RANGE)}
-
-
-def _public_walkins(state):
-    return {"daily_limit": WALKIN_DAILY_LIMIT, "used": state["walkins"]["used"],
-            "remaining": max(0, WALKIN_DAILY_LIMIT - state["walkins"]["used"]),
-            "budget_range": list(WALKIN_BUDGET_RANGE), "min_condition": WALKIN_MIN_CONDITION,
-            "visit_rule": "每天1次；正式sell无论成交、还价或离店都占用，改价/换货/重启不刷新；次日重置"}
-
-
-def _sale_option(state, item, visitor):
-    # All eligibility inputs are public; never consult base_value or exact budget.
-    reference = max(1, round(_reference_value(state, item)))
-    maximum = reference * COUNTER_MAX_RATIO[0] // COUNTER_MAX_RATIO[1]
-    budget_range = list(visitor["budget_range"] if visitor else WALKIN_BUDGET_RANGE)
-    minimum = visitor["min_condition"] if visitor else WALKIN_MIN_CONDITION
-    preference = not visitor or item["kind"] == visitor["preferred_kind"]
-    condition = item["condition"] >= minimum
-    reasons = []
-    if item["price"] < 2:
-        reasons.append("标价没有低于初价的合法整数还价空间")
-    if item["price"] > maximum:
-        reasons.append(f"标价超过公开参考价125%的{maximum}星币上限")
-    if item["price"] > budget_range[1]:
-        reasons.append(f"标价超过公开预算区间上限{budget_range[1]}星币")
-    if not preference:
-        reasons.append("类别不合顾客偏好")
-    if not condition:
-        reasons.append(f"品相未达到{minimum}%")
-    available = (state["phase"] == "active" and state["energy"] >= 1 and state["negotiation"] is None
-                 and not item.get("collected", False) and item["last_sale_day"] != state["day"]
-                 and (visitor["status"] == "waiting" if visitor else state["walkins"]["used"] < WALKIN_DAILY_LIMIT))
-    return {"customer_id": visitor["id"] if visitor else None,
-            "customer_name": visitor["name"] if visitor else "旅客", "available": available,
-            "counter_eligible": not reasons, "reasons": reasons,
-            "public_reference": reference, "max_counter_ask": min(maximum, budget_range[1]),
-            "budget_range": budget_range, "min_condition": minimum,
-            "preference_match": bool(preference), "condition_met": condition, "ask": item["price"],
-            "warning": ("普通失败会提出一次还价；100仍直接离店。" if not reasons else
-                        "普通失败直接离店，不会还价；01仍可按标价成交。")
-                       + "正式尝试花1精力并用掉该买家今日接待；本货今日不能改价换客重试。"
-                       + "预算区间不保证买得起标价，精确预算隐藏。"}
-
-
 def _start_day(state, rng):
     state["day"] += 1
     state["daily_event"] = copy.deepcopy(rng.choice([e for e in EVENTS if e["id"] != state["daily_event"]["id"]]))
@@ -265,7 +210,6 @@ def _start_day(state, rng):
     state["supplier_stock"] = {k: _stock_limit(state, k) for k in SUPPLIERS}
     state["visitors"] = _make_visitors(rng, state)
     state["energy"] = _max_energy(state)
-    state["walkins"] = _make_walkins(rng, state["day"])
 
 
 def _next_milestone(state):
@@ -309,11 +253,10 @@ def new_state(seed=None):
         "daily_event": copy.deepcopy(EVENTS[0]), "visitors": [], "discovered": [],
         "first_week_result": "pending", "milestones": [],
         "stats": {"crates_opened": 0, "sales_count": 0, "gross_earnings": 0, "days_traded": 0},
-        "migration": None, "engine_upgrade": None, "management_upgrade": None,
+        "migration": None, "engine_upgrade": None,
         "negotiation": None, "roll_seq": 0, "roll_history": [],
     }
     state["visitors"] = _make_visitors(rng, state)
-    state["walkins"] = _make_walkins(rng, state["day"])
     state["rng"] = rng.getstate()
     _event(state, "start", "卷帘门升起", "第1天开张！先争取首周650星币与2种收藏，再把小店经营成星港地标。")
     return state
@@ -380,8 +323,6 @@ def _public_item(state, item):
         "id": item["id"], "name": item["name"], "rarity": item["rarity"], "kind": item["kind"],
         "color": COLORS[item["rarity"]], "condition": item["condition"],
         "value_estimate": [max(1, int(estimate * 0.82)), max(2, math.ceil(estimate * 1.20))],
-        "public_reference": max(1, round(estimate)),
-        "sale_options": [_sale_option(state, item, visitor) for visitor in [None] + state["visitors"]],
         "repair_cost": _repair_cost(state, item), "price": item["price"], "origin": item["origin"],
         "description": item["description"], "collected": item.get("collected", False),
         "sale_attempted_today": item.get("last_sale_day", 0) == state["day"],
@@ -406,13 +347,12 @@ def observation(state):
         "capacity": _capacity(state), "operating_cost": _operating_cost(state),
         "upgrade_costs": {row["id"]: row["next_cost"] for row in upgrades}, "upgrade_details": upgrades,
         "campaign": _public_campaign(state), "daily_event": copy.deepcopy(state["daily_event"]),
-        "visitors": _public_visitors(state), "walkins": _public_walkins(state), "codex": _public_codex(state),
+        "visitors": _public_visitors(state), "codex": _public_codex(state),
         "collection_sets": [{"id": kind, "name": value[0], "description": value[1], "required": 3,
                              "current": len({i["catalog_id"] for i in state["collection"] if i["kind"] == kind}),
                              "completed": _has_set(state, kind), "perk": value[1]} for kind, value in SET_RULES.items()],
         "stats": copy.deepcopy(state["stats"]), "migration": copy.deepcopy(state["migration"]),
         "engine_upgrade": copy.deepcopy(state["engine_upgrade"]),
-        "management_upgrade": copy.deepcopy(state["management_upgrade"]),
         "negotiation": _public_negotiation(state),
         "last_roll": copy.deepcopy(state["roll_history"][-1]) if state["roll_history"] else None,
         "roll_history": copy.deepcopy(state["roll_history"]),
@@ -426,9 +366,6 @@ def observation(state):
                         "final_offer_rule": "counter_offer < price < original_price",
                         "final_chance_formula": "clamp(1,99,floor(clamp(1,99,70+bonus)*counter/(2*price-counter)))",
                         "initial_chance_formula": "clamp(1,99,floor(60+bonus-50*log2(price/reference))); above hidden budget: 1",
-                        "counter_rule": "普通失败须标价≤公开参考价125%且≤公开预算上限，并符合类别/品相；否则离店；01仍必成",
-                        "walkin_daily_limit": WALKIN_DAILY_LIMIT, "walkin_budget_range": list(WALKIN_BUDGET_RANGE),
-                        "walkin_min_condition": WALKIN_MIN_CONDITION,
                         "final_budget_rule": "还价已反映预算，最终报价不再施加隐藏预算门槛",
                         "endday": "自动谢绝未完成还价", "miracle_probability": 0.01},
     }
@@ -540,7 +477,7 @@ def _trade_context(state, item, visitor):
             15 if item["kind"] == visitor["preferred_kind"] else -10)
         add("符合品相期待" if item["condition"] >= visitor["min_condition"] else "品相未达期待",
             5 if item["condition"] >= visitor["min_condition"] else -10)
-    return {"reference": _actual_value(state, item), "budget": visitor["budget"] if visitor else state["walkins"]["budget"],
+    return {"reference": _actual_value(state, item), "budget": visitor["budget"] if visitor else None,
             "modifiers": modifiers, "modifier": sum(m["value"] for m in modifiers)}
 
 
@@ -709,12 +646,7 @@ def apply_command(state, command, args):
                 raise GameError("这位顾客今天不在店里；用 visitors 查看。")
             if visitor["status"] != "waiting":
                 raise GameError("这位顾客今天已经接待过；明天再安排吧。")
-        if visitor is None and state["walkins"]["used"] >= WALKIN_DAILY_LIMIT:
-            raise GameError("今日旅客接待已用完；改价、换货或重启不会刷新，明天再试或选择尚未接待的特邀顾客。")
         _spend(state, energy=1)
-        eligibility = _sale_option(state, item, visitor)
-        if visitor is None:
-            state["walkins"]["used"] += 1
         item["last_sale_day"] = state["day"]
         context = _trade_context(state, item, visitor)
         roll = _trade_roll(state, rng, item, visitor, item["price"], context, "initial")
@@ -727,10 +659,6 @@ def apply_command(state, command, args):
                    _roll_text(roll) + f" {buyer}买走「{item['name']}」，收入{item['price']}星币，口碑+{rep}。", item)
         elif roll["roll"] == 100:
             _event(state, "sale", "100大失败 · 客人告辞", _roll_text(roll), item)
-        elif not eligibility["counter_eligible"]:
-            _event(state, "sale", "这次没有还价 · 客人告辞", _roll_text(roll) +
-                   " 公开还价条件未满足：" + "；".join(eligibility["reasons"]) +
-                   "。本次收入0，货物留下；今天该货与该买家接待已用。", item)
         else:
             # A real, binding customer quote, not an exact budget disclosure.
             offer = _counter_offer(context, item["price"])
@@ -871,7 +799,7 @@ def _validate_trades(state):
                 and all(isinstance(m, dict) and set(m) == {"label", "value"} and isinstance(m["label"], str)
                         and integer(m["value"], -2 * scale, 3 * scale) and m["value"] % scale == 0 for m in modifiers)
                 and type(total) is int and total == sum(m["value"] for m in modifiers))
-    if not {"engine_upgrade", "management_upgrade", "walkins", "negotiation", "roll_seq", "roll_history"} <= set(state):
+    if not {"engine_upgrade", "negotiation", "roll_seq", "roll_history"} <= set(state):
         fail()
     sequence, history = state.get("roll_seq"), state.get("roll_history")
     if type(sequence) is not int or sequence < 0 or not isinstance(history, list) or len(history) != min(sequence, 60):
@@ -892,63 +820,25 @@ def _validate_trades(state):
             if (not integer(imported_boundary, 0, sequence) or not integer(v3_boundary, 0, imported_boundary)
                     or upgrade["from_version"] == 3 and v3_boundary != imported_boundary):
                 fail()
-    management = state.get("management_upgrade")
-    v5_boundary = 0
-    if management is not None:
-        expected = {"from_version", "source_day", "source_phase", "source_roll_seq", "walkins_used_on_import"}
-        if (not isinstance(management, dict) or set(management) != expected
-                or not integer(management["from_version"], 1, 5)
-                or not integer(management["source_day"], 1, state["day"])
-                or management["source_phase"] not in {"active", "week_summary", "lost"}
-                or not integer(management["source_roll_seq"], imported_boundary, sequence)
-                or not integer(management["walkins_used_on_import"], 0, WALKIN_DAILY_LIMIT)):
-            fail()
-        source_version = management["from_version"]
-        if (source_version == 1 and (state["migration"] is None or upgrade is not None)
-                or source_version in (2, 3, 4) and (upgrade is None or upgrade["from_version"] != source_version)
-                or source_version <= 2 and management["source_roll_seq"] != 0
-                or source_version in (3, 4) and management["source_roll_seq"] != imported_boundary):
-            fail()
-        v5_boundary = management["source_roll_seq"]
-    elif imported_boundary or upgrade is not None or state["migration"] is not None:
-        fail()
-    walkins = state.get("walkins")
-    if (not isinstance(walkins, dict) or set(walkins) != {"day", "used", "budget"}
-            or not integer(walkins["day"], state["day"], state["day"])
-            or not integer(walkins["used"], 0, WALKIN_DAILY_LIMIT)
-            or not integer(walkins["budget"], *WALKIN_BUDGET_RANGE)):
-        fail()
-    used = any(r.get("day") == state["day"] and r.get("stage") == "initial"
-               and r.get("customer_id") is None for r in history if isinstance(r, dict))
-    if management and management["source_day"] == state["day"]:
-        used = used or management["walkins_used_on_import"]
-    if walkins["used"] != int(bool(used)):
-        fail()
     common = {"id", "day", "item_id", "item_name", "customer_id", "customer_name", "stage", "modifier", "modifiers",
               "success", "outcome", "price", "explanation", "rules_version", "counter_offer"}
     old_keys = common | {"face", "total", "target", "base_target", "rejection_penalty"}
     new_keys = common | {"die", "tens", "ones", "roll", "threshold", "probability", "base_chance", "premium"}
     seen = {}
-    ordinary_days = set()
     for index, row in enumerate(history):
         expected_id = sequence - len(history) + index + 1
-        version = 3 if expected_id <= v3_boundary else 4 if expected_id <= imported_boundary else 5 if expected_id <= v5_boundary else VERSION
-        if (not isinstance(row, dict) or set(row) != (new_keys if version >= 5 else old_keys)
+        version = 3 if expected_id <= v3_boundary else 4 if expected_id <= imported_boundary else VERSION
+        if (not isinstance(row, dict) or set(row) != (new_keys if version == VERSION else old_keys)
                 or type(row["rules_version"]) is not int or row["rules_version"] != version
                 or not integer(row["id"], expected_id, expected_id) or not integer(row["day"], 1, state["day"])
                 or not integer(row["price"], 1, 9999)
                 or not all(isinstance(row[k], str) for k in ["item_id", "item_name", "customer_name", "explanation"])
                 or row["customer_id"] not in {None} | {p[0] for p in CUSTOMERS}
                 or row["stage"] not in {"initial", "final"}
-                or not modifiers_valid(row["modifiers"], row["modifier"], 5 if version >= 5 else 1)
+                or not modifiers_valid(row["modifiers"], row["modifier"], 5 if version == VERSION else 1)
                 or type(row["success"]) is not bool):
             fail()
-        if version == 6 and row["stage"] == "initial" and row["customer_id"] is None:
-            if (row["day"] in ordinary_days or management and row["day"] == management["source_day"]
-                    and management["walkins_used_on_import"]):
-                fail()
-            ordinary_days.add(row["day"])
-        if version >= 5:
+        if version == VERSION:
             if (row["die"] != "D100" or not integer(row["tens"], 0, 90) or row["tens"] % 10
                     or not integer(row["ones"], 0, 9) or not integer(row["roll"], 1, 100)
                     or row["roll"] != (row["tens"] + row["ones"] or 100)
@@ -988,7 +878,7 @@ def _validate_trades(state):
             previous = seen[pair]
             previous_modifiers = copy.deepcopy(previous["modifiers"])
             previous_modifier = previous["modifier"]
-            if version >= 5 and previous["rules_version"] < 5:
+            if version == VERSION and previous["rules_version"] != VERSION:
                 previous_modifier *= 5
                 for bonus in previous_modifiers:
                     bonus["value"] *= 5
@@ -1029,8 +919,7 @@ def _validate_trades(state):
     if (not isinstance(context, dict) or set(context) != {"reference", "budget", "modifiers", "modifier"}
             or type(context["reference"]) not in (int, float) or not math.isfinite(context["reference"]) or context["reference"] <= 0
             or not modifiers_valid(context["modifiers"], context["modifier"], 5)
-            or context["budget"] != (visitor["budget"] if visitor else
-                state["walkins"]["budget"] if pending["origin_rules_version"] >= 6 else None)):
+            or context["budget"] != (visitor["budget"] if visitor else None)):
         fail()
     if (not history or not integer(pending["initial_roll_id"], history[-1]["id"], history[-1]["id"])
             or history[-1]["stage"] != "initial" or history[-1]["outcome"] != "failure"
@@ -1040,11 +929,10 @@ def _validate_trades(state):
             or context["reference"] != _actual_value(state, item)):
         fail()
     row = history[-1]
-    if row["rules_version"] >= 5:
+    if row["rules_version"] == VERSION:
         if (row["modifier"] != context["modifier"] or row["modifiers"] != context["modifiers"]
                 or row["threshold"] != _initial_chance(context, pending["original_price"])
-                or pending["counter_offer"] != _counter_offer(context, pending["original_price"])
-                or row["rules_version"] >= 6 and not _sale_option(state, item, visitor)["counter_eligible"]):
+                or pending["counter_offer"] != _counter_offer(context, pending["original_price"])):
             fail()
     else:
         import _legacy_v4
@@ -1060,7 +948,7 @@ def _validate_trades(state):
 def _validate_state(state):
     """Detect damaged/incompatible saves without silently resetting or rerolling."""
     if not isinstance(state, dict) or state.get("version") != VERSION:
-        raise GameError("不兼容或损坏的存档；请保留原文件。v1–v5存档需用对应 import-v1 至 import-v5 复制至全新路径。")
+        raise GameError("不兼容或损坏的存档；请保留原文件。v1/v2/v3/v4存档需用 import-v1/import-v2/import-v3/import-v4 复制至全新路径。")
     integers = {"revision": (0, 10**12), "day": (1, 10**12), "credits": (0, 10**12),
                 "energy": (0, 17), "reputation": (0, 99), "next_crate": (1, 10**12),
                 "next_item": (1, 10**12), "event_seq": (1, 10**12)}
@@ -1167,60 +1055,100 @@ def _validate_state(state):
     _rng(state)
 
 
-def _upgrade_v5_copy(original, source_version):
-    """Copy-only v6 upgrade: preserve promised quotes, old rolls and main RNG."""
+def migrate_v1(source_bytes):
+    """Pure migration. Never writes the source or plays a turn."""
+    import _legacy_v1
+    try:
+        original = json.loads(source_bytes)
+        _legacy_v1._validate_state(original)
+    except (ValueError, TypeError, KeyError, IndexError, OverflowError, _legacy_v1.GameError) as exc:
+        raise GameError("旧版存档无法验证；原文件未改动。请提供完整v1 save.json，不能用公开observation代替。") from exc
     state = copy.deepcopy(original)
     state["version"] = VERSION
-    state["walkins"] = _make_walkins(_rng(state), state["day"])
-    # v1/v2 did not record all sold visits. Conservatively close today's ordinary
-    # slot rather than grant a fresh visit on import. It reopens next day.
-    used = source_version <= 2 or any(row["day"] == state["day"] and row["stage"] == "initial"
-        and row["customer_id"] is None for row in state["roll_history"])
-    state["walkins"]["used"] = int(used)
-    state["management_upgrade"] = {"from_version": source_version, "source_day": state["day"],
-        "source_phase": state["phase"], "source_roll_seq": state["roll_seq"],
-        "walkins_used_on_import": int(used)}
-    if state["negotiation"]:
-        state["negotiation"]["rules_version"] = VERSION
-    _event(state, "import", "小店开始挑选合适的买家",
-           f"v{source_version}进度只读复制至v6；原档、历史骰、随机进度、日期与资源保留，未经营。"
-           "旧待谈还价仍可接受/谢绝/作唯一最终报价，不追溯取消；新初次接待采用公开还价条件与每天1位旅客。"
-           + ("v1/v2未完整记录已售接待，导入当天旅客名额保守视为已用，次日恢复。" if source_version <= 2 else ""))
+    state.update(negotiation=None, roll_seq=0, roll_history=[], engine_upgrade=None)
+    state["upgrades"]["display"] = 0
+    state["daily_event"] = copy.deepcopy(EVENTS[0])
+    # Deterministic import visitors, independent of the preserved game RNG.
+    migration_rng = random.Random(hashlib.sha256(source_bytes).digest())
+    state["visitors"] = _make_visitors(migration_rng, state)
+    state["discovered"] = sorted({i["catalog_id"] for i in state["inventory"] + state["collection"]}
+                                 | {row[0] for row in CATALOG if any(row[1] in log["text"] for log in state["log"])})
+    state["stats"] = {"crates_opened": 0, "sales_count": 0, "gross_earnings": 0, "days_traded": 0}
+    state["milestones"] = []
+    state["migration"] = {"from_version": 1, "source_day": original["day"], "source_phase": original["phase"], "stats_scope": "since_import"}
+    if original["phase"] == "won":
+        state["phase"] = "week_summary"
+        state["first_week_result"] = "won"
+    elif original["phase"] == "lost" and original["day"] == 7 and original["last_event"]["title"] == "七天试营业结束":
+        state["phase"] = "week_summary"
+        state["first_week_result"] = "missed"
+    else:
+        state["first_week_result"] = "pending"
+    _check_milestones(state)
+    _event(state, "import", "旧店的灯还亮着", "旧版进度已复制导入，原文件保持不变。" +
+           ("首周结算仍停在第7天；使用continue才会继续。" if state["phase"] == "week_summary" else "现金、物品、收藏与随机状态保留。"))
     return state
 
 
-def _migrate(source_bytes, version):
-    import _legacy_v5
-    try:
-        if version == 5:
-            original = json.loads(source_bytes)
-            _legacy_v5._validate_state(original)
-        else:
-            original = getattr(_legacy_v5, f"migrate_v{version}")(source_bytes)
-            _legacy_v5._validate_state(original)
-    except (ValueError, TypeError, KeyError, IndexError, OverflowError, _legacy_v5.GameError) as exc:
-        raise GameError(f"v{version}存档无法验证；原文件未改动，请提供完整私有存档而非observation。") from exc
-    return _upgrade_v5_copy(original, version)
-
-
-def migrate_v1(source_bytes):
-    return _migrate(source_bytes, 1)
-
-
 def migrate_v2(source_bytes):
-    return _migrate(source_bytes, 2)
+    """Read-only v2 upgrade; preserve resources, committed cargo and game RNG."""
+    import _legacy_v2
+    try:
+        original = json.loads(source_bytes)
+        _legacy_v2._validate_state(original)
+    except (ValueError, TypeError, KeyError, IndexError, OverflowError, _legacy_v2.GameError) as exc:
+        raise GameError("扩展版存档无法验证；原文件未改动。请提供完整v2 save.json，不能用公开observation代替。") from exc
+    state = copy.deepcopy(original)
+    state["daily_event"] = copy.deepcopy(next(e for e in EVENTS if e["id"] == original["daily_event"]["id"]))
+    state.update(version=VERSION, negotiation=None, roll_seq=0, roll_history=[],
+                 engine_upgrade={"from_version": 2, "source_day": original["day"], "source_phase": original["phase"]})
+    _event(state, "import", "骰子来到柜台", "扩展版进度已复制升级。原文件不变，现金、库存、收藏、顾客、当天已用接待与随机状态完整保留；未执行任何经营动作。")
+    return state
+
+
+def _upgrade_d20_copy(original, source_version):
+    """Keep original dice and quote, explicitly switch the future retry to v5."""
+    state = copy.deepcopy(original)
+    state["version"] = VERSION
+    state["daily_event"] = copy.deepcopy(next(e for e in EVENTS if e["id"] == original["daily_event"]["id"]))
+    prior_upgrade = original.get("engine_upgrade") or {}
+    v3_boundary = (original["roll_seq"] if source_version == 3 else
+                   prior_upgrade.get("source_roll_seq", 0) if prior_upgrade.get("from_version") == 3 else 0)
+    state["engine_upgrade"] = {"from_version": source_version, "source_day": original["day"],
+        "source_phase": original["phase"], "source_roll_seq": original["roll_seq"], "legacy_v3_roll_seq": v3_boundary}
+    if source_version == 3:
+        for row in state["roll_history"]:
+            row.update(base_target=row["target"], rejection_penalty=0, rules_version=3, counter_offer=None)
+    if state["negotiation"]:
+        pending = state["negotiation"]
+        pending.update(rules_version=VERSION, origin_rules_version=state["roll_history"][-1]["rules_version"])
+        pending["context"]["modifier"] *= 5
+        for bonus in pending["context"]["modifiers"]:
+            bonus["value"] *= 5
+    _event(state, "import", "双D10来到柜台",
+           f"v{source_version}进度只读复制到新路径；历史D20保留原规则，不重判、不推进随机数或日期。"
+           "已承诺还价保留，可免费接受/谢绝；尚未使用的最终报价明确改用v5百分骰与涨幅成功率，旧加值每点转为5百分点。")
+    return state
 
 
 def migrate_v3(source_bytes):
-    return _migrate(source_bytes, 3)
+    import _legacy_v3
+    try:
+        original = json.loads(source_bytes)
+        _legacy_v3._validate_state(original)
+    except (ValueError, TypeError, KeyError, IndexError, OverflowError, _legacy_v3.GameError) as exc:
+        raise GameError("v3存档无法验证；原文件未改动，请提供完整私有存档。") from exc
+    return _upgrade_d20_copy(original, 3)
 
 
 def migrate_v4(source_bytes):
-    return _migrate(source_bytes, 4)
-
-
-def migrate_v5(source_bytes):
-    return _migrate(source_bytes, 5)
+    import _legacy_v4
+    try:
+        original = json.loads(source_bytes)
+        _legacy_v4._validate_state(original)
+    except (ValueError, TypeError, KeyError, IndexError, OverflowError, _legacy_v4.GameError) as exc:
+        raise GameError("v4存档无法验证；原文件未改动，请提供完整私有存档。") from exc
+    return _upgrade_d20_copy(original, 4)
 
 
 class GameStore:
@@ -1260,7 +1188,7 @@ class GameStore:
         """Return only public data. Failed commands never change the save or RNG."""
         arity = {"new": 0, "status": 0, "market": 0, "buy": 1, "open": 1, "inspect": 1,
                  "repair": 1, "price": 2, "sell": (1, 2), "endday": 0, "upgrade": 1, "collect": 1, "restart": 1,
-                 "continue": 0, "codex": 0, "visitors": 0, "import-v1": 1, "import-v2": 1, "import-v3": 1, "import-v4": 1, "import-v5": 1, "preview-offer": 2,
+                 "continue": 0, "codex": 0, "visitors": 0, "import-v1": 1, "import-v2": 1, "import-v3": 1, "import-v4": 1, "preview-offer": 2,
                  "accept": 1, "decline": 1, "offer": 2}
         if command not in arity:
             raise GameError(f"未知命令：{command}；运行 help 查看用法。")
@@ -1272,13 +1200,13 @@ class GameStore:
                 if self.save_path.exists():
                     raise GameError("已有存档，new 不会重抽；继续 status，或明确 restart --confirm。")
                 state = new_state()
-            elif command in {"import-v1", "import-v2", "import-v3", "import-v4", "import-v5"}:
+            elif command in {"import-v1", "import-v2", "import-v3", "import-v4"}:
                 source = Path(args[0]).expanduser().resolve()
                 if source in {self.save_path, self.observation_path}:
                     raise GameError("导入目标必须是新的路径，不能原地覆盖旧版存档。请使用 --save 新路径。")
                 if self.save_path.exists() or self.observation_path.exists():
                     raise GameError("目标存档或公开画面已存在；导入不会覆盖，请选全新 --save 路径。")
-                state = {"import-v1": migrate_v1, "import-v2": migrate_v2, "import-v3": migrate_v3, "import-v4": migrate_v4, "import-v5": migrate_v5}[command](source.read_bytes())
+                state = {"import-v1": migrate_v1, "import-v2": migrate_v2, "import-v3": migrate_v3, "import-v4": migrate_v4}[command](source.read_bytes())
             elif command == "restart":
                 if args != ("--confirm",):
                     raise GameError("重新开始会清空本局；确定后使用 restart --confirm。")
@@ -1303,9 +1231,9 @@ class GameStore:
                         price = _final_price(pending, args[1])
                         public["negotiation"]["preview"] = dict(_offer_forecast(state, pending, price), suggested=False)
                     elif command == "market":
-                        result = {k: public[k] for k in ["revision", "day", "credits", "energy", "demand", "suppliers", "daily_event", "visitors", "walkins", "operating_cost"]}
+                        result = {k: public[k] for k in ["revision", "day", "credits", "energy", "demand", "suppliers", "daily_event", "visitors", "operating_cost"]}
                     elif command in {"codex", "visitors"}:
-                        result = public[command] if command == "codex" else {"day": public["day"], "visitors": public["visitors"], "walkins": public["walkins"]}
+                        result = public[command] if command == "codex" else {"day": public["day"], "visitors": public["visitors"]}
                     elif command == "inspect":
                         result = next((item for item in public["inventory"] + public["collection"] if item["id"] == args[0].upper()), None)
                         if result is None:
