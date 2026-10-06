@@ -22,6 +22,7 @@ import urllib.parse
 import urllib.request
 import uuid
 from public_projection import sanitize, known_art
+from diagnostics import Diagnostics, error_fields
 
 MUTATIONS = {'buy','open','repair','price','sell','accept','decline','offer','collect','replace-collection','upgrade','endday','continue'}
 READS = {'status','market','codex','visitors','inspect','preview-offer'}
@@ -38,7 +39,9 @@ class HttpProblem(Exception):
         self.status = status
 
 class TransientNetwork(Exception):
-    pass
+    def __init__(self, diagnostic_fields=None):
+        super().__init__('transient_network')
+        self.diagnostic_fields=diagnostic_fields or {'error_class':'transient_network'}
 
 def digest(value):
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
@@ -132,11 +135,11 @@ def real_transport(url, token, payload, timeout=20):
     except ssl.SSLError: raise Stop('tls_security_error')
     except urllib.error.URLError as exc:
         if isinstance(exc.reason, ssl.SSLError): raise Stop('tls_security_error')
-        if isinstance(exc.reason, (TimeoutError, ConnectionError)): raise TransientNetwork()
-        if isinstance(exc.reason, socket.gaierror) and exc.reason.errno==socket.EAI_AGAIN: raise TransientNetwork()
-        if isinstance(exc.reason, OSError) and exc.reason.errno in (errno.ECONNRESET,errno.ETIMEDOUT,errno.ECONNREFUSED,errno.ENETUNREACH): raise TransientNetwork()
-        raise Stop('network_error_needs_review')
-    except (TimeoutError, ConnectionError): raise TransientNetwork()
+        if isinstance(exc.reason, (TimeoutError, ConnectionError)): raise TransientNetwork(error_fields(exc.reason))
+        if isinstance(exc.reason, socket.gaierror) and exc.reason.errno==socket.EAI_AGAIN: raise TransientNetwork(error_fields(exc.reason))
+        if isinstance(exc.reason, OSError) and exc.reason.errno in (errno.ECONNRESET,errno.ETIMEDOUT,errno.ECONNREFUSED,errno.ENETUNREACH): raise TransientNetwork(error_fields(exc.reason))
+        raise Stop('network_error_needs_review', **error_fields(exc.reason))
+    except (TimeoutError, ConnectionError) as exc: raise TransientNetwork(error_fields(exc))
 
 def official_runner(c, action, lock_fd):
     # Only the official engine reads its private state. This process never does.
@@ -170,9 +173,10 @@ def render_known(c, observation, lock_fd):
         stderr=subprocess.DEVNULL, pass_fds=(lock_fd,), timeout=45, check=True)
 
 class Controller:
-    def __init__(self, config, token, transport=real_transport, runner=official_runner, renderer=render_known, sleeper=time.sleep):
+    def __init__(self, config, token, transport=real_transport, runner=official_runner, renderer=render_known, sleeper=time.sleep, diagnostics=None):
         self.c=validate_config(config); self.token=token; self.transport=transport; self.runner=runner; self.renderer=renderer; self.sleep=sleeper
         self.ops=self.c['journal']/'operations'; self.state_path=self.c['journal']/'publication.json'
+        self.diagnostics=diagnostics if diagnostics is not None else Diagnostics()
         # A verified activation may receive a newer server epoch. The original
         # config still identifies this game's binding and operation journal.
         self.publication_epoch = self.c['session_epoch']
@@ -214,6 +218,53 @@ class Controller:
             self._pending_cache = {rec['operation_id']: rec for rec in records}
         return records
 
+    def observe_diagnostic_state(self, observation, published):
+        revision=observation['revision']
+        self.diagnostics.update(local_public_revision=revision)
+        valid=(isinstance(published,dict) and published.get('session_id')==self.c['session_id']
+               and type(published.get('session_epoch')) is int and published['session_epoch']>=1
+               and type(published.get('revision')) is int and published['revision']>=0
+               and all(re.fullmatch(r'[a-f0-9]{64}',str(published.get(k,''))) for k in ('source_hash','server_digest','request_sha256')))
+        if not valid:
+            self.diagnostics.update(last_ack_revision=None,last_ack_epoch=None,ack_relation='unknown')
+        else:
+            relation=('different_epoch' if published['session_epoch']!=self.publication_epoch else
+                      'same_snapshot' if published['revision']==revision and published['source_hash']==digest(observation) else
+                      'older_snapshot' if published['revision']<revision else 'inconsistent')
+            self.diagnostics.update(last_ack_revision=published['revision'],last_ack_epoch=published['session_epoch'],ack_relation=relation)
+        self.diagnostics.emit('state_observed')
+
+    def observe_optional_diagnostic_state(self, observation):
+        """A diagnostic read must never block a recovery that does not need it."""
+        self.diagnostics.update(local_public_revision=observation['revision'])
+        try:
+            published=self.state()
+        except Exception as exc:
+            self.diagnostics.update(last_ack_revision=None,last_ack_epoch=None,ack_relation='unknown')
+            self.diagnostics.emit('state_unavailable',**error_fields(exc))
+            return
+        self.observe_diagnostic_state(observation,published)
+
+    def execute(self, request):
+        self.diagnostics.reset()
+        mode=request.get('mode','action'); action=request.get('action')
+        self.diagnostics.emit('execution_started',mode=mode if mode in ('action','sync','reconcile') else 'invalid',
+                              action_kind=action[0] if isinstance(action,list) and action and action[0] in MUTATIONS|READS else 'none')
+        try:
+            result=self._execute(request)
+            self.diagnostics.emit('execution_finished')
+            return {**result,'sync_status':self.diagnostics.status()}
+        except BaseException as exc:
+            if self.diagnostics.state['publication'] in ('pending','response_received'):
+                self.diagnostics.update(publication='failed')
+            fields=error_fields(exc)
+            if isinstance(exc,Stop):
+                fields={'error_class':'guarded_stop'}
+                for key in ('error_class','error_errno','http_status'):
+                    if key in exc.details: fields[key]=exc.details[key]
+            self.diagnostics.emit('execution_stopped',**fields)
+            raise
+
     def record_publication(self, observation, ack, *, request_sha256, art_hashes):
         """Record a verified upload or activation acknowledgement without POST.
 
@@ -245,7 +296,12 @@ class Controller:
                  'revision': revision, 'source_hash': source_hash, 'server_digest': ack['digest'],
                  'request_sha256': request_sha256, 'art_hashes': art_hashes,
                  'published_at': ack.get('published_at'), 'acknowledged_at': time.time()}
+        self.diagnostics.update(publication='ack_verified_not_recorded')
+        self.diagnostics.emit('publication_ack_verified')
         atomic_json(self.state_path, saved)
+        self.observe_diagnostic_state(observation,saved)
+        self.diagnostics.update(publication='acknowledged')
+        self.diagnostics.emit('publication_recorded')
         for rec in records:
             if rec['stage'] in ('committed', 'sync_pending', 'resolved_sync_pending') and rec.get('revision_after', revision+1) <= revision:
                 self.write_op(rec, 'published', published_revision=revision)
@@ -260,7 +316,14 @@ class Controller:
         if any(r.get('revision_after',-1)>revision for r in self.pending()): raise Stop('projection_refresh_required')
         if previous.get('revision',-1)>revision: raise Stop('source_revision_rollback')
         if previous.get('revision')==revision and previous.get('source_hash')!=source_hash: raise Stop('same_revision_source_conflict')
-        self.renderer(self.c,observation,self.lock_fd)
+        self.diagnostics.update(publication='pending')
+        self.diagnostics.emit('publication_preparing')
+        try:
+            self.renderer(self.c,observation,self.lock_fd)
+        except BaseException as exc:
+            self.diagnostics.update(publication='failed')
+            self.diagnostics.emit('publication_failed',**error_fields(exc))
+            raise
         if digest(self.observation())!=source_hash: raise Stop('source_changed_during_preparation')
         hashes={}; artwork={}
         for identity in sorted(known_art(observation)):
@@ -274,23 +337,29 @@ class Controller:
         play_state='finished' if observation['phase'] in ('week_summary','lost') else 'ready'
         from datetime import datetime,timezone
         payload={'stream_id':'main','session_id':self.c['session_id'],'session_epoch':self.publication_epoch,'play_state':play_state,'source_saved_at':datetime.fromtimestamp(self.c['observation_path'].stat().st_mtime,timezone.utc).isoformat(),'observation':observation,'artwork':artwork}
+        self.diagnostics.emit('publication_prepared',new_art_count=len(artwork))
         ack=None
         for attempt in range(3):
             try:
+                self.diagnostics.emit('publication_attempt',attempt=attempt+1)
                 ack=self.transport(self.c['site_url']+'/api/ingest',self.token,payload)
+                self.diagnostics.update(publication='response_received')
+                self.diagnostics.emit('publication_ack_received')
                 break
             except HttpProblem as exc:
+                self.diagnostics.emit('publication_transport_failed',error_class='http_error',http_status=exc.status)
                 if exc.status in (401,403): raise Stop('publication_authorization_stop',http_status=exc.status)
                 if exc.status not in TRANSIENT: raise Stop('publication_rejected',http_status=exc.status)
                 if attempt==2: raise Stop('publication_retry_exhausted',http_status=exc.status)
-            except TransientNetwork:
+            except TransientNetwork as exc:
+                self.diagnostics.emit('publication_transport_failed',**exc.diagnostic_fields)
                 if attempt==2: raise Stop('publication_retry_exhausted')
             if attempt<2: self.sleep(attempt+1)
         result = self.record_publication(observation, ack,
                                         request_sha256=hashlib.sha256(request_bytes(payload)).hexdigest(),
                                         art_hashes=hashes)
         return {**result, 'new_art_count': len(artwork)}
-    def execute(self, request):
+    def _execute(self, request):
         mode=request.get('mode','action'); opid=request.get('operation_id')
         if mode not in ('action','sync','reconcile'): raise Stop('invalid_mode')
         if mode!='sync' and (not isinstance(opid,str) or not ID.fullmatch(opid)): raise Stop('invalid_operation_id')
@@ -301,8 +370,14 @@ class Controller:
             if binding_path.exists():
                 if read_json(binding_path)!=binding: raise Stop('game_scope_or_journal_changed')
             else: atomic_json(binding_path,binding)
-            self.pending()
+            records=self.pending()
+            committed=[r for r in records if r['stage'] in ('committed','sync_pending','published','resolved_committed','resolved_sync_pending') and r.get('resolution')!='abandoned' and type(r.get('revision_after')) is int and r['revision_after']>=0]
+            latest=max(committed,key=lambda r:r['revision_after']) if committed else None
+            self.diagnostics.update(last_local_commit_revision=latest['revision_after'] if latest else None,
+                                    last_local_commit_basis=('operator_review' if latest.get('resolution_basis')=='operator_review' else 'journal_record') if latest else 'unknown')
             current=None if mode=='reconcile' else self.observation(); published=self.state()
+            if current is not None: self.observe_diagnostic_state(current,published)
+            if mode in ('sync','reconcile'): self.diagnostics.update(local_action='not_executed')
             if current is not None and published.get('revision',-1)>current['revision']: raise Stop('source_revision_rollback')
             if mode=='sync': return self.publish(current)
             file=self.ops/(opid+'.json'); existing=read_json(file) if file.exists() else None
@@ -312,6 +387,7 @@ class Controller:
                 # Explicit read-only reconciliation refreshes a possibly stale projection.
                 if self.runner(self.c,['status'],lock_fd)!=0: raise Stop('status_refresh_failed')
                 current=self.observation()
+                self.observe_diagnostic_state(current,self.state())
                 if existing['stage'] in ('committed','sync_pending','resolved_sync_pending'): return {**self.publish(current),'operation_id':opid,'engine_executed':False,'resolution_basis':existing.get('resolution_basis')}
                 resolution=request.get('resolution')
                 if resolution not in ('committed','abandoned'):
@@ -319,9 +395,12 @@ class Controller:
                     raise Stop('action_outcome_needs_review',operation_id=opid,before_revision=existing['revision_before'],current_revision=current['revision'])
                 if resolution=='committed' and existing['action'][0] in MUTATIONS and current['revision']<=existing['revision_before']: raise Stop('projection_refresh_required')
                 self.write_op(existing,'resolved_sync_pending',revision_after=current['revision'],resolution=resolution,resolution_basis='operator_review')
+                if resolution=='committed':self.diagnostics.update(last_local_commit_revision=current['revision'],last_local_commit_basis='operator_review')
                 result=self.publish(current);return {**result,'operation_id':opid,'engine_executed':False,'resolution':resolution,'resolution_basis':'operator_review'}
             action=validate_action(request.get('action')); action_hash=digest(action)
             if existing:
+                self.diagnostics.update(local_action='not_executed')
+                self.diagnostics.emit('duplicate_suppressed')
                 if existing.get('action_hash')!=action_hash: raise Stop('operation_id_reused_for_different_action')
                 if existing['stage'] in ('running','intent','uncertain','committed_projection_pending'): raise Stop('action_outcome_needs_review',operation_id=opid,before_revision=existing['revision_before'],current_revision=current['revision'])
                 if existing['stage'] in ('committed','sync_pending','resolved_sync_pending'): return {**self.publish(current),'operation_id':opid,'engine_executed':False}
@@ -331,22 +410,33 @@ class Controller:
             if published.get('session_epoch') != self.publication_epoch or published.get('revision')!=current['revision'] or published.get('source_hash')!=digest(current): self.publish(current)
             rec={'schema_version':1,'operation_id':opid,'session_id':self.c['session_id'],'session_epoch':self.c['session_epoch'],'config_fingerprint':self.c['fingerprint'],'action':action,'action_hash':action_hash,'revision_before':current['revision'],'created_at':time.time()}
             self.write_op(rec,'intent');self.write_op(rec,'running')
+            self.diagnostics.update(local_action='unknown')
+            self.diagnostics.emit('engine_started',action_kind=action[0])
             try: code=self.runner(self.c,action,lock_fd)
-            except BaseException:
+            except BaseException as exc:
+                self.diagnostics.emit('engine_failed',**error_fields(exc))
                 self.write_op(rec,'uncertain');raise Stop('action_outcome_needs_review',operation_id=opid)
+            self.diagnostics.emit('engine_returned',exit_code=code)
             if code!=0 and (action[0] in MUTATIONS or code!=2):
                 self.write_op(rec,'uncertain',exit_code=code);raise Stop('action_outcome_needs_review',operation_id=opid)
             if code==2:
+                self.diagnostics.update(local_action='rejected')
                 self.write_op(rec,'rejected',exit_code=code);return {'ok':False,'operation_id':opid,'stage':'rejected','engine_executed':True,'exit_code':code}
             try: after=self.observation()
-            except Exception:
+            except Exception as exc:
+                self.diagnostics.emit('projection_failed',**error_fields(exc))
                 self.write_op(rec,'committed_projection_pending');raise Stop('projection_refresh_required',operation_id=opid)
             expected=current['revision']+(1 if action[0] in MUTATIONS else 0)
             if after['revision']!=expected:
                 self.write_op(rec,'committed_projection_pending',observed_revision=after['revision']);raise Stop('projection_or_concurrent_action_needs_review',operation_id=opid)
             self.write_op(rec,'committed',revision_after=after['revision'],source_hash=digest(after))
+            self.diagnostics.update(local_action='committed',last_local_commit_revision=after['revision'],last_local_commit_basis='journal_record')
+            self.observe_diagnostic_state(after,self.state())
+            self.diagnostics.emit('engine_committed')
             try: result=self.publish(after)
             except Stop as exc:
+                self.diagnostics.update(publication='failed')
+                self.diagnostics.emit('publication_failed',error_class=exc.details.get('error_class','guarded_stop'),http_status=exc.details.get('http_status'),error_errno=exc.details.get('error_errno'))
                 self.write_op(rec,'sync_pending',sync_error=exc.code);raise Stop(exc.code,operation_id=opid,engine_committed=True,revision=after['revision'],**exc.details)
             return {**result,'operation_id':opid,'engine_executed':True}
 
@@ -364,15 +454,19 @@ def hidden_request():
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--config',required=True);args=parser.parse_args()
+    diagnostics=Diagnostics(stream=sys.stderr)
     try:
-        config=read_json(args.config);request=hidden_request();access=request.pop('access',{})
+        config=read_json(args.config);scope=validate_config(config);diagnostics.preflight(scope['site_url'])
+        request=hidden_request();access=request.pop('access',{})
         if access.get('project_id')!=config.get('site_id') or not isinstance(access.get('token'),str) or not access['token']: raise Stop('existing_site_access_required')
-        controller=Controller(config,access['token']);access.clear()
+        controller=Controller(config,access['token'],diagnostics=diagnostics);access.clear()
         result=controller.execute(request);print(json.dumps(result,ensure_ascii=False),flush=True);return 0 if result.get('ok') else 2
     except Stop as exc:
-        print(json.dumps({'ok':False,'error':exc.code,**exc.details},ensure_ascii=False),flush=True);return 3
-    except Exception:
+        diagnostics.emit('execution_stopped',error_class='guarded_stop')
+        print(json.dumps({'ok':False,'error':exc.code,**exc.details,'sync_status':diagnostics.status()},ensure_ascii=False),flush=True);return 3
+    except Exception as exc:
+        diagnostics.emit('execution_stopped',**error_fields(exc))
         # Never echo credential-bearing input, HTTP bodies or engine output.
-        print(json.dumps({'ok':False,'error':'unexpected_failure_preserve_receipts_do_not_replay'}),flush=True);return 4
+        print(json.dumps({'ok':False,'error':'unexpected_failure_preserve_receipts_do_not_replay','sync_status':diagnostics.status()}),flush=True);return 4
 
 if __name__=='__main__': raise SystemExit(main())

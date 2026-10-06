@@ -168,3 +168,36 @@ python3 simulate_management_v6.py --games 50 --days 40
 现在可通过私有的current-shop.json固定入口操作当前游戏；一次命令完成已授权的复制升级、原子切换与公开画面同步，换档不再需要重建网站。旧会话上传会被epoch保护拒绝，重复操作ID不会重新执行。完整步骤与恢复说明见[运行手册](tools/web_sync/SESSION_RUNBOOK.md)。
 
 本轮在临时存档完成全项目测试和81步完整链路检查；性能数据与限制见[性能报告](PERFORMANCE_REPORT.md)。测试与基准源码均保留，实际存档、凭据和运行配置不在发布包里。
+
+## 同步阶段诊断
+
+同步入口还提供发送凭据前的明确目的地说明、脱敏阶段日志和本地提交／最后耐久回执状态；这些状态不宣称手机已实时收到新结果。详见[诊断验证报告](DIAGNOSTICS_REPORT.md)与运行手册。
+
+## 可选架构实验：同一权威状态
+
+[本地实验工具](tools/experimental_colocated/README.md)把官方CLI放在临时副本中执行，将私档、白名单公开画面与操作回执一起提交到SQLite。它只做合成概念验证，没有HTTP服务或生产认证，不会替换现用引擎，也不提供真实存档迁移。不能直接暴露到公网或据此宣称网站已部署。
+
+从仓库根目录分别运行两套测试，使用独立Python进程：
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tools/web_sync/tests -v
+STARDUST_TEST_ENGINE="$PWD/engine.py" PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tools/experimental_colocated/tests -v
+python3 tools/experimental_colocated/benchmark.py --engine "$PWD/engine.py"
+```
+
+两套工具各有自己的public_projection模块，不要在同一长期Python进程里混合导入它们。实验的40项本地检查、原子提交边界、图片存储限制及部署前缺项见[验证记录](tools/experimental_colocated/VALIDATION.md)和[架构说明](tools/experimental_colocated/ARCHITECTURE.md)。未测公网、平台审核或手机延迟；临时CLI计算可能在崩溃回滚后重算，保证的是权威提交幂等。
+
+## 可选实验：Worker 原生 v9 规则移植（G2）
+
+[TypeScript 移植包](tools/experimental_worker/README.md)保留 Python 官方引擎作为参考，覆盖13种原生v9变更操作和6种公开读取。冻结的G2源码通过2,205项测试，另有1项明确保留的任意浮点log2边界TODO；没有意外失败。20轮混合合成流程比对11,303条命令和143,838次读取。v8继承验证仍是有边界的离线测试，不提供真实存档导入。
+
+需要Node 24、Python 3及本仓库官方源码，从仓库根目录运行：
+
+```sh
+STARDUST_ENGINE_SOURCE="$PWD/engine.py" PYTHONDONTWRITEBYTECODE=1 \
+node --experimental-strip-types --test --test-concurrency=1 tools/experimental_worker/tests/*.test.mjs
+```
+
+测试在内存中生成样本，完整序列可能需要约11分钟。服务端模块包含隐藏规则与图鉴，不应打包到浏览器。公开包不含私人网站配置、凭据或托管服务；生产适配器另行管理。
+
+[G2验证检查点](tools/experimental_worker/G2_CHECKPOINT.json)区分本地差分测试、托管适配器检查、部署与实际工具调用：G1连接工具和手机路径已确认，G2部署后旧读取已看到合成状态，但检查点时新工具目录尚未刷新，G2新动作的在线验证仍待完成。不要把部署成功称作生产迁移完成。任意浮点全域等价、旧版本完整兼容、真实存档迁移和图片交付仍受[契约边界](tools/experimental_worker/docs/ENGINE_CONTRACT.md)约束。

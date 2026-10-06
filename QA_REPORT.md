@@ -1,3 +1,41 @@
+# Worker G2 Synthetic Compatibility Source Checkpoint
+
+Verified source checkpoint: 2026-10-06 20:57:43 UTC. The optional `tools/experimental_worker/` package preserves all 47 owner-frozen source/docs/test/config files byte-for-byte, plus their G2 checkpoint. The bundled Python reference engine matches its recorded SHA-256. This release also retains the pending diagnostics update and the separate local SQLite experiment.
+
+## What passed
+
+- Frozen Worker full serial suite: **2,205 passing cases, zero unexpected failures, one documented TODO**; typecheck exited 0 on the owner's validation environment. These are not counts of translated Python tests.
+- Native v9: 13 mutations and 6 reads; 20 mixed campaigns, 11,303 commands and 143,838 repeated reads, comparing private fields/RNG and full public projections.
+- Bounded offline native-v8 heritage: 8 campaigns with 1,257 old and 4,084 new commands. This gate does not expose a real-save importer or extend the strict native dispatcher to arbitrary legacy states.
+- Separate hosted adapter validation: 30 local synthetic groups. G1 connected tool actions and the phone path had been confirmed. G2 deployment succeeded, and an existing read saw the synthetic G2 state; at this source checkpoint the refreshed G2 action/query tool catalog had not yet appeared, so those live actions were not validated.
+- Packaging rechecked every checkpoint hash and the reference engine hash, and successfully reran the numeric-rules and native official-engine differential subsets from the nested package. All Python oracle files compile. The approximately 11-minute full Worker suite was not repeated for packaging. The owner typecheck result is retained; this packaging environment has no standalone `tsc` on PATH.
+
+## Explicit remaining gap
+
+The named TODO is global JavaScript/CPython log2 equality at engineered arbitrary float references. Eight constructed references can cross a threshold by one; membership checks found those known references outside the legal item-reference domain. Tested legal values and campaigns match. This is not an all-state, all-platform or all-floating-point proof, and no generic epsilon hides the discrepancy.
+
+## Distribution and live boundaries
+
+This package contains source, reproducible synthetic oracles, docs, package/TypeScript configuration, and the checkpoint only. It contains no generated fixtures, private saves, actual observations, Site account identifiers/configuration, credentials, deployment archives, database/WAL, screenshots, images, caches, or node_modules. Server-only rules/catalog modules must not be included in a browser bundle.
+
+Publishing this source does not deploy a Site, refresh another chat's tools, execute G2 live actions, install a runtime, or migrate the real game. Production readiness, complete legacy provenance/type/float/RNG compatibility, authorized real-save transfer/rollback and discovered-art staging remain separate gates. See [G2 checkpoint](tools/experimental_worker/G2_CHECKPOINT.json), [Worker README](tools/experimental_worker/README.md), [hosted gates](tools/experimental_worker/docs/HOSTED_GATES.md), and [heritage limits](tools/experimental_worker/docs/V8_HERITAGE_GATE.md).
+
+---
+
+# Diagnostics and Optional Co-Located Experiment Release
+
+Verified 2026-10-06. The diagnostic implementation passed **465 game tests + 88 helper tests (553 total)** on its frozen source, Python compilation, and the full 81-action official-CLI synthetic week with 82 mock publication acknowledgements. The public action/state transcript exactly matches the earlier baseline. The optional isolated co-located prototype passed **40 separate local synthetic checks** (27 implementation and 13 independent checks).
+
+Packaging preserved the existing release files, integration tests, privacy exclusions, and performance caveats. It merged only the diagnostics documentation additions and copied hash-verified source. Every distributed Python file is byte-identical to its relevant validated owner source. In the final nested package, the helper suite was rerun separately (**88 passed in 4.590 s**) and the optional prototype suite was rerun in another Python process (**40 passed in 2.544 s**, with the packaged official v9 engine selected). All Python files compile. The unchanged 465-test game suite and full-week smoke were not repeated for packaging.
+
+Diagnostics distinguish the current local action, recorded local commitment, operator-reviewed recovery, a verified-but-not-yet-durable acknowledgement, and the last durable local publication receipt. They do not assert continuous server state or explain every tool-layer cancellation. Existing fail-closed behavior, bounded transient retries, locks, deduplication, and crash recovery remain in place. See [DIAGNOSTICS_REPORT.md](DIAGNOSTICS_REPORT.md).
+
+The prototype under `tools/experimental_colocated/` is an optional local architecture experiment. It has no HTTP listener or production authentication and does not replace the active game engine. Its SQLite authority commits private state, public projection and operation receipt together, while images remain outside that database transaction. It does not prove real-save migration, complete command/history/RNG equivalence, production durability or hosting readiness. Test it in a separate Python process because its local `public_projection` module intentionally differs from the web-sync adapter. See its [README](tools/experimental_colocated/README.md) and [validation limits](tools/experimental_colocated/VALIDATION.md).
+
+Publication distributes code, docs and reproducible tests only. No real gameplay, session activation, production upload, hosting/account creation or live-runtime installation accompanies this release. No Site/frontend source changed or was retested here. Saves, databases/WAL, actual observations, owner configuration/identity, credentials, logs, pointers, receipts, generated images and caches are excluded. The existing performance report remains historical; these checks do not measure or guarantee Internet, review-system, Site or phone latency.
+
+---
+
 # Current-Shop Switch and Pipeline Optimization Verification
 
 Verified 2026-10-06. This release uses the final frozen current-shop source; packaging changes only the README, this QA introduction, runtime ignore rules, and the release manifest. Game formulas and engine/viewer sources remain unchanged from v9.

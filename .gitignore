@@ -48,3 +48,18 @@ current-shop.json
 *.current-shop.json
 *.switches/
 .pytest_cache/
+
+# Experimental authority databases and object storage are always private.
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+/tools/experimental_colocated/work/
+/tools/experimental_colocated/objects/
+
+# Worker experiments ship source/oracles only, never generated fixtures or builds.
+/tools/experimental_worker/node_modules/
+/tools/experimental_worker/.generated/
+/tools/experimental_worker/fixtures-generated/
+/tools/experimental_worker/coverage/
+/tools/experimental_worker/dist/
