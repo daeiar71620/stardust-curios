@@ -1,4 +1,41 @@
-# v7 Verification Report
+# v8 Quality Collection Verification Report
+
+Verified 2026-10-06 using synthetic states only. No actual player save was read, copied, migrated or advanced. Development used a separate directory; the previous v7 source remains intact.
+
+## Current automated results
+
+- `python3 -m unittest discover -q`: **406 tests passed in 85.373 seconds**. This aggregate includes all 355 previous tests, 40 new independent engine tests and the initial 11 collection UI tests
+- Two backend-projection UI cases were added after aggregate discovery, then four narrow-text wrapping regressions. The final affected renderer run passed **112 tests** across collection, catalog, customer and general viewer suites. The final source contains 412 test methods. A second whole-project aggregate was not run for those test additions and the focused wrapping-only change
+- `python3 -m py_compile *.py` passed after final source edits
+- Both standalone generators validated 13 dice and 16 management scenes and removed their temporary directories. Generated demo observations and screenshots are not release contents
+- The expected argparse usage/error line during the aggregate comes from the invalid-snapshot-path rejection test; the aggregate ended OK
+- `_legacy_v6.py` is byte-identical to the previous v7 production engine, retaining protocol 6 as an independent migration/trading oracle
+
+## New rule coverage
+
+Forty independent engine tests verify native protocol 8/unchanged trade rules6; inclusive 69/70 quality boundary; qualified-only categories and distinct themes; all four fixed milestones, including no unpromised fourth-category requirement at tier 3; bounded longhaul caps; unchanged any-quality set perks; earned milestones surviving investment and repair failure; explicit strict replacement, one-energy fee, identity and lock preservation, no RNG or repeated robot energy; full-inventory swaps; atomic equal/worse/missing/unavailable rejection; cabinet repair cost, RNG, two-total/once-daily limits and failure degradation; no direct cabinet sale/price; copy-only imports v1–v6; persistent one-stage grace and expiry even during cascaded milestone checks; old first-week won/missed preservation; v6 pending accept/final-offer parity; old-history and exact-budget preservation; rejected v8 re-import/relabel; and hidden-cargo/catalog privacy.
+
+Only expected prior assertions changed: the current protocol now equals 8 and collected items may now be repaired. Legacy trade assertions still require rules_version 6. Known and unknown codex schemas are unchanged.
+
+## Viewer coverage
+
+Read-only collection overview and detail views show personal/qualified totals, qualified categories/themes, the current threshold, missing requirements, known low-condition reasons, cabinet repair commands and inventory same-type replacement eligibility. Old-stage grace is explicit. The viewer never executes these commands.
+
+Renderer tests cover wide 1320×940, portrait 760×1240, phone 390×844, minimum 320×568 and 1364×1024; all 24 slots remain reachable after the taller quality summary. Complete requirements fit the read-only detail panel. Public-item joins are allowlisted; unknown entries retain exactly slot/discovered/collected and cannot acquire repair/replacement/quality identity details. Repeated pages, stale detail refresh, Close, tab changes and disappearances remain covered.
+
+Actual cloud GUI spot-check passed with the real `spectator.py --demo` at 1180×812 and an exact 390×844 window. Checked: personal versus qualified totals, complete category/theme requirements, threshold, cabinet shortfall and repair cost/energy/command, eligible 93% replacement and rejected 60% replacement of a 65% cabinet copy, one-for-one explanation, read-only warning, unknown card/detail staying ???, active legacy grace, next-stage quality wording and live public-observation refresh. No blocking functional defect was found. The one test window was confirmed closed; the pre-existing real viewer was restored focused/fullscreen with its prior view. Temporary synthetic scenes and helper directory were removed and their absence verified. No screenshots were saved or published and no real session was run or save read.
+
+A user-provided narrow screenshot identified a minor percentage-token line break. The final fix only makes numeric percentages/fractions atomic during wrapping and ellipsis truncation; it does not redesign the layout. Four new regressions cover 70%,99%, fractions, the exact event sentence across narrow widths and whole-token ellipsis. The 112 affected renderer tests and compilation pass. A second actual 390×844 window check confirms the event sentence now wraps before the whole 70% token, with no clipping. The user's original screenshot remains untouched outside the release. The second demo window was confirmed closed, its temporary directory removed, and the original real viewer remained fullscreen and was refocused. See [focused actual GUI record](ui-qa/actual/COLLECTION_V8_GUI_QA.md).
+
+## Scope and remaining uncertainty
+
+The new progression changes collection qualification only. Cash/reputation/upgrade schedules, buying/selling values, ordinary buyer capacity/budget, percentile dice and negotiations are unchanged. The original balance report remains historical v6 evidence, not a claim that v8 long-term progression is perfectly balanced. Human pacing of the quality thresholds remains a playtesting question.
+
+Private files, fake saves, generated observations/playthroughs/screenshots, caches and credentials are excluded. The release contains source, frozen validators, tests, docs, temporary-only generators and the pre-existing aggregate economic report. Importing remains an explicit copy-only operation to a new path.
+
+---
+
+# Historical v7 Verification Report
 
 ## Catalog and item-art release (2026-10-06)
 

@@ -20,8 +20,7 @@ import sys
 import tempfile
 from contextlib import contextmanager
 
-VERSION = 8
-TRADE_RULES_VERSION = 6
+VERSION = 6
 WALKIN_DAILY_LIMIT = 1
 WALKIN_BUDGET_RANGE = (60, 120)
 WALKIN_MIN_CONDITION = 45
@@ -97,31 +96,29 @@ CUSTOMERS = [
     ("bo", "波波", "流浪机偶导演", "bot", 70, 220, 650),
 ]
 MILESTONES = [
-    {"id": "first_week", "title": "首周站稳脚跟", "description": "第7天闭店后检查；未达标也能继续，之后补齐。", "min_condition": 70, "targets": {"credits": 650, "collection": 2}},
-    {"id": "neighborhood", "title": "街区熟面孔", "description": "积累客源，拓展收藏，并为店铺作长远投资。", "min_condition": 75, "targets": {"credits": 1400, "collection": 5, "reputation": 12, "upgrades": 2, "collection_categories": 3}},
-    {"id": "lighthouse", "title": "夜航灯塔", "description": "让旅客为了这间小店，愿意在星港多停一天。", "min_condition": 80, "targets": {"credits": 2800, "collection": 9, "reputation": 25, "upgrades": 4, "quality_themes": 1}},
-    {"id": "landmark", "title": "星港地标", "description": "经营与收藏都留下自己的名字。", "min_condition": 85, "targets": {"credits": 5000, "collection": 15, "reputation": 40, "upgrades": 6, "collection_categories": 5, "quality_themes": 3}},
+    {"id": "first_week", "title": "首周站稳脚跟", "description": "第7天闭店后检查；未达标也能继续，之后补齐。", "targets": {"credits": 650, "collection": 2}},
+    {"id": "neighborhood", "title": "街区熟面孔", "description": "积累客源，拓展收藏，并为店铺作长远投资。", "targets": {"credits": 1400, "collection": 5, "reputation": 12, "upgrades": 2}},
+    {"id": "lighthouse", "title": "夜航灯塔", "description": "让旅客为了这间小店，愿意在星港多停一天。", "targets": {"credits": 2800, "collection": 9, "reputation": 25, "upgrades": 4}},
+    {"id": "landmark", "title": "星港地标", "description": "经营与收藏都留下自己的名字。", "targets": {"credits": 5000, "collection": 15, "reputation": 40, "upgrades": 6}},
 ]
 HELP = """星屑杂货铺 · 七天首周，长期经营
-首周目标：第7天闭店扣费后现金650星币、2种品相至少70%的合格收藏。首周结算不会强制终止经营。
+首周目标：第7天闭店扣费后现金650星币、收藏2种。首周结算不会强制终止经营。
 命令（python3 engine.py [--save 路径] 命令）：
   new / status / market / codex / visitors
   buy salvage|curated       购买已封存盲箱，1精力
   open C001                 开箱，1精力
   inspect I001              查看公开估值，不改变运气
-  repair I001               修理货架或收藏柜物品，2精力，每件最多2次、每天1次
+  repair I001               修理，2精力，每件最多2次、每天1次
   price I001 120            免费定价，1–9999整数
   sell I001 [顾客ID]         初次双D10百分骰检定，1精力；省略顾客为旅客
   accept I001               接受客人的唯一还价，免费且不掷骰
   decline I001              谢绝还价，免费且结束当天接待
   preview-offer I001 120    只读风险预览；不消耗精力或随机数
   offer I001 120            客人还价 < 最终报价 < 初次标价；1精力，最后一次双D10百分骰
-  collect I001              个人珍藏，任何品相均可，1精力；3种同类解锁原套装效果
-  replace-collection I001   用货架中更好同款替换收藏，1精力；旧件回货架、限制保留
+  collect I001              永久收藏，1精力；3种同类收藏解锁套装效果
   upgrade workbench|shelf|display  升级，2精力，每项3级
   endday                    支付当日维护费，推进日期
   continue                  首周结算后明确继续到第8天；不重开、不再扣第7天费用
-  import-v6 原存档路径       只读v6并复制至新的 --save 路径；当前阶段沿用旧收藏条件
   import-v5 原存档路径       只读百分骰版并复制至新的 --save 路径；旧还价仍兑现
   import-v4 原存档路径       只读还价版并复制至新的 --save 路径；历史D20不重判
   import-v3 原存档路径       只读掷骰版并复制至新的 --save 路径；不重掷
@@ -131,8 +128,7 @@ HELP = """星屑杂货铺 · 七天首周，长期经营
   help                      查看命令
 
 24种货物、每日事件、偏好顾客、5种收藏套装和持续阶段目标。
-现金用于经营、修理、扩店；收藏不能直接卖出，可修理或用更好同款替换后出售旧件。
-品质主题为同类3种不同收藏且全部达到本阶段品相；普通套装收益不设品相门槛。顾客预算与成交价有不确定性。
+现金用于经营、修理、扩店；收藏不可卖回。顾客预算与成交价有不确定性。
 每天每件货物只有一场接待，最多初次与最终两骰；每位特邀顾客只接待一次。
 双D10分别取十位00–90和个位0–9；00+0记100。掷低点：01大成功、100大失败。
 01一见钟情突破普通意愿与预算，按合法报价成交；100立即结束接待。
@@ -275,102 +271,16 @@ def _start_day(state, rng):
 def _next_milestone(state):
     completed = len(state["milestones"])
     if completed < len(MILESTONES):
-        milestone = copy.deepcopy(MILESTONES[completed])
-    else:
-        voyage = completed - len(MILESTONES) + 1
-        milestone = {"id": f"voyage_{voyage}", "title": f"星海长航 · 第{voyage}章",
-            "description": "长期经营继续；收藏数量上限24种、品相上限90%、品质主题上限5套，现金与口碑目标延续原规则。",
-            "min_condition": min(90, 85 + voyage),
-            "targets": {"credits": 5000 + 3000 * voyage, "collection": min(len(CATALOG), 15 + 2 * voyage),
-                        "reputation": min(99, 40 + 10 * voyage), "collection_categories": 5,
-                        "quality_themes": min(5, 3 + voyage)}}
-    upgrade = state.get("collection_upgrade")
-    grace = bool(upgrade and completed == upgrade["legacy_stage_index"])
-    milestone["legacy_grace"] = grace
-    if grace:
-        milestone["min_condition"] = 0
-        milestone["targets"].pop("collection_categories", None)
-        milestone["targets"].pop("quality_themes", None)
-        milestone["description"] += " 本阶段沿用导入时的旧收藏数量条件；达成后的下一阶段启用品质规则。"
-    return milestone
+        return MILESTONES[completed]
+    voyage = completed - len(MILESTONES) + 1
+    return {"id": f"voyage_{voyage}", "title": f"星海长航 · 第{voyage}章",
+            "description": "星港的故事继续；目标达成后仍可一直经营。",
+            "targets": {"credits": 5000 + 3000 * voyage, "collection": min(len(CATALOG), 15 + 2 * voyage), "reputation": min(99, 40 + 10 * voyage)}}
 
 
-def _quality_counts(state, minimum):
-    # Identity is used only for distinctness; all published aggregates are based
-    # on already opened cabinet items, never sealed cargo or undiscovered rows.
-    qualified = {i["catalog_id"]: i for i in state["collection"] if i["condition"] >= minimum}
-    categories = {kind: sum(i["kind"] == kind for i in qualified.values()) for kind in KINDS}
-    return len(qualified), categories
-
-
-def _goal_values(state, milestone=None):
-    milestone = milestone or _next_milestone(state)
-    count, categories = _quality_counts(state, milestone["min_condition"])
-    return {"credits": state["credits"], "collection": count,
-            "reputation": state["reputation"], "upgrades": sum(state["upgrades"].values()),
-            "collection_categories": sum(count > 0 for count in categories.values()),
-            "quality_themes": sum(count >= 3 for count in categories.values())}
-
-
-def _public_collection_progress(state):
-    milestone = _next_milestone(state)
-    minimum = milestone["min_condition"]
-    values = _goal_values(state, milestone)
-    _, categories = _quality_counts(state, minimum)
-    labels = {"collection": "旧规收藏" if milestone["legacy_grace"] else "合格收藏",
-              "collection_categories": "合格类别", "quality_themes": "品质主题"}
-    requirements = [{"key": key, "label": labels[key], "current": values[key], "target": target,
-                     "met": values[key] >= target}
-                    for key, target in milestone["targets"].items() if key in labels]
-    missing = [f"{goal['label']}还差{goal['target'] - goal['current']}" for goal in requirements if not goal["met"]]
-    return {"personal_count": len({i["catalog_id"] for i in state["collection"]}),
-            "qualified_count": values["collection"], "qualified_categories": values["collection_categories"],
-            "quality_themes": values["quality_themes"], "min_condition": minimum,
-            "legacy_grace": milestone["legacy_grace"], "requirements": requirements, "missing": missing,
-            "categories": [{"id": kind, "name": KINDS[kind], "qualified_count": count, "theme_complete": count >= 3}
-                           for kind, count in categories.items()]}
-
-
-def _item_quality(state, item):
-    milestone = _next_milestone(state)
-    minimum = milestone["min_condition"]
-    met = item["condition"] >= minimum
-    collected = item.get("collected", False)
-    if milestone["legacy_grace"]:
-        reason = "本阶段沿用旧规，珍藏不设品相门槛" if collected else "本阶段沿用旧规，入柜后计入收藏数量"
-    elif not met:
-        reason = f"品相{item['condition']}%低于本阶段{minimum}%，还差{minimum - item['condition']}个百分点；可个人珍藏，不计入合格目标"
-    else:
-        reason = f"达到本阶段{minimum}%品相门槛" + ("，计入合格收藏" if collected else "，入柜后计入合格收藏")
-    return {"min_condition": minimum, "condition_met": met, "counted": bool(collected and met), "reason": reason}
-
-
-def _public_repair(state, item):
-    cost = _repair_cost(state, item)
-    reasons = []
-    if state["phase"] != "active": reasons.append("当前不在营业阶段")
-    if item["condition"] >= 100: reasons.append("已是完美品相")
-    if item["repairs"] >= 2: reasons.append("已用完两次修理机会")
-    if item["last_repair_day"] == state["day"]: reasons.append("今天已经修理过")
-    if state["negotiation"] and state["negotiation"]["item_id"] == item["id"]: reasons.append("该物品正在还价中")
-    if state["energy"] < 2: reasons.append("精力不足2点")
-    if state["credits"] < cost: reasons.append("星币不足")
-    return {"available": not reasons, "reasons": reasons, "cost": cost, "energy_cost": 2,
-            "command": f"repair {item['id']}"}
-
-
-def _public_replacement(state, item):
-    if item.get("collected", False): return None
-    previous = next((i for i in state["collection"] if i["catalog_id"] == item["catalog_id"]), None)
-    if previous is None: return None
-    reasons = []
-    if state["phase"] != "active": reasons.append("当前不在营业阶段")
-    if item["condition"] <= previous["condition"]: reasons.append("品相必须严格高于柜中同款")
-    if state["negotiation"] and state["negotiation"]["item_id"] == item["id"]: reasons.append("该物品正在还价中")
-    if state["energy"] < 1: reasons.append("精力不足1点")
-    return {"available": not reasons, "reasons": reasons, "cabinet_item_id": previous["id"],
-            "cabinet_condition": previous["condition"], "energy_cost": 1,
-            "command": f"replace-collection {item['id']}"}
+def _goal_values(state):
+    return {"credits": state["credits"], "collection": len(state["collection"]),
+            "reputation": state["reputation"], "upgrades": sum(state["upgrades"].values())}
 
 
 def _check_milestones(state):
@@ -379,7 +289,7 @@ def _check_milestones(state):
     # No random rewards or free cash: earned titles persist without a reroll opportunity.
     for _ in range(len(MILESTONES) + 1):
         milestone = _next_milestone(state)
-        values = _goal_values(state, milestone)
+        values = _goal_values(state)
         if not all(values[key] >= target for key, target in milestone["targets"].items()):
             break
         state["milestones"].append({"id": milestone["id"], "title": milestone["title"], "day": state["day"]})
@@ -399,13 +309,13 @@ def new_state(seed=None):
         "daily_event": copy.deepcopy(EVENTS[0]), "visitors": [], "discovered": [],
         "first_week_result": "pending", "milestones": [],
         "stats": {"crates_opened": 0, "sales_count": 0, "gross_earnings": 0, "days_traded": 0},
-        "migration": None, "engine_upgrade": None, "management_upgrade": None, "collection_upgrade": None,
+        "migration": None, "engine_upgrade": None, "management_upgrade": None,
         "negotiation": None, "roll_seq": 0, "roll_history": [],
     }
     state["visitors"] = _make_visitors(rng, state)
     state["walkins"] = _make_walkins(rng, state["day"])
     state["rng"] = rng.getstate()
-    _event(state, "start", "卷帘门升起", "第1天开张！先争取首周650星币与2种品相至少70%的合格收藏，再把小店经营成星港地标。")
+    _event(state, "start", "卷帘门升起", "第1天开张！先争取首周650星币与2种收藏，再把小店经营成星港地标。")
     return state
 
 
@@ -448,15 +358,14 @@ def _public_codex(state):
 
 def _public_campaign(state):
     milestone = _next_milestone(state)
-    values = _goal_values(state, milestone)
-    labels = {"credits": "现金", "collection": "旧规收藏" if milestone["legacy_grace"] else "合格收藏",
-              "reputation": "口碑", "upgrades": "设施总等级", "collection_categories": "合格类别", "quality_themes": "品质主题"}
+    values = _goal_values(state)
+    labels = {"credits": "现金", "collection": "不同收藏", "reputation": "口碑", "upgrades": "设施总等级"}
     goals = [{"key": key, "label": labels[key], "current": values[key], "target": target, "met": values[key] >= target}
              for key, target in milestone["targets"].items()]
     return {"title": "七天首周" if state["first_week_result"] == "pending" else "星港长期经营",
             "stage_index": len(state["milestones"]), "first_week_result": state["first_week_result"],
             "completed_milestones": copy.deepcopy(state["milestones"]),
-            "next_milestone": {key: milestone[key] for key in ("id", "title", "description")} | {"goals": goals, "ready": all(g["met"] for g in goals), "min_condition": milestone["min_condition"], "legacy_grace": milestone["legacy_grace"]},
+            "next_milestone": {key: milestone[key] for key in ("id", "title", "description")} | {"goals": goals, "ready": all(g["met"] for g in goals)},
             "can_continue": state["phase"] == "week_summary", "continue_command": "continue" if state["phase"] == "week_summary" else None,
             "unlimited": True}
 
@@ -481,8 +390,6 @@ def _public_item(state, item):
         "public_reference": max(1, round(estimate)),
         "sale_options": [_sale_option(state, item, visitor) for visitor in [None] + state["visitors"]],
         "repair_cost": _repair_cost(state, item), "price": item["price"], "origin": item["origin"],
-        "collection_quality": _item_quality(state, item), "repair": _public_repair(state, item),
-        "collection_replacement": _public_replacement(state, item),
         "description": item["description"], "collected": item.get("collected", False),
         "sale_attempted_today": item.get("last_sale_day", 0) == state["day"],
         "repair_attempted_today": item.get("last_repair_day", 0) == state["day"],
@@ -505,7 +412,7 @@ def observation(state):
         "last_event": copy.deepcopy(state["last_event"]), "log": copy.deepcopy(state["log"]),
         "capacity": _capacity(state), "operating_cost": _operating_cost(state),
         "upgrade_costs": {row["id"]: row["next_cost"] for row in upgrades}, "upgrade_details": upgrades,
-        "campaign": _public_campaign(state), "collection_progress": _public_collection_progress(state), "daily_event": copy.deepcopy(state["daily_event"]),
+        "campaign": _public_campaign(state), "daily_event": copy.deepcopy(state["daily_event"]),
         "visitors": _public_visitors(state), "walkins": _public_walkins(state), "codex": _public_codex(state),
         "collection_sets": [{"id": kind, "name": value[0], "description": value[1], "required": 3,
                              "current": len({i["catalog_id"] for i in state["collection"] if i["kind"] == kind}),
@@ -513,7 +420,6 @@ def observation(state):
         "stats": copy.deepcopy(state["stats"]), "migration": copy.deepcopy(state["migration"]),
         "engine_upgrade": copy.deepcopy(state["engine_upgrade"]),
         "management_upgrade": copy.deepcopy(state["management_upgrade"]),
-        "collection_upgrade": copy.deepcopy(state["collection_upgrade"]),
         "negotiation": _public_negotiation(state),
         "last_roll": copy.deepcopy(state["roll_history"][-1]) if state["roll_history"] else None,
         "roll_history": copy.deepcopy(state["roll_history"]),
@@ -553,7 +459,7 @@ def _item(state, item_id):
     for item in state["inventory"]:
         if item["id"] == item_id.upper():
             return item
-    raise GameError(f"货架上没有物品 {item_id}；柜中物品不能直接出售或改价，可用 repair 修理，或用更好同款 replace-collection。")
+    raise GameError(f"货架上没有物品 {item_id}；已收藏的物品不能出售或修理。")
 
 
 def _make_cargo(rng, supplier):
@@ -685,7 +591,7 @@ def _trade_roll(state, rng, item, visitor, price, context, stage):
               "modifier": context["modifier"], "modifiers": copy.deepcopy(context["modifiers"]),
               "threshold": threshold, "probability": threshold / 100, "base_chance": base,
               "premium": (price-counter)/counter if counter is not None else None,
-              "rules_version": TRADE_RULES_VERSION, "counter_offer": counter,
+              "rules_version": VERSION, "counter_offer": counter,
               "success": success, "outcome": outcome, "price": price, "explanation": explanation}
     state["roll_history"].append(record)
     state["roll_history"] = state["roll_history"][-60:]
@@ -764,9 +670,7 @@ def apply_command(state, command, args):
         state["stats"]["crates_opened"] += 1
         _event(state, "reveal", "封条揭开", f"开出了{RARITIES[item['rarity']]}物品「{item['name']}」！品相 {item['condition']}%，初始标价 {item['price']} 星币。", item)
     elif command == "repair":
-        item = next((i for i in state["collection"] if i["id"] == args[0].upper()), None)
-        if item is None:
-            item = _item(state, args[0])
+        item = _item(state, args[0])
         _require_unlocked_item(state, item)
         if item["condition"] >= 100:
             raise GameError("这件物品已是完美品相，无需修理。")
@@ -841,7 +745,7 @@ def apply_command(state, command, args):
                                     "customer_id": visitor["id"] if visitor else None, "customer_name": buyer,
                                     "original_price": item["price"], "counter_offer": offer,
                                     "day": state["day"], "context": context, "initial_roll_id": roll["id"],
-                                    "rules_version": TRADE_RULES_VERSION, "origin_rules_version": TRADE_RULES_VERSION}
+                                    "rules_version": VERSION, "origin_rules_version": VERSION}
             if visitor:
                 visitor["status"] = "negotiating"
             _event(state, "negotiation", "客人还了一个价", _roll_text(roll) +
@@ -879,7 +783,7 @@ def apply_command(state, command, args):
         item = _item(state, args[0])
         _require_unlocked_item(state, item)
         if any(i["catalog_id"] == item["catalog_id"] for i in state["collection"]):
-            raise GameError("收藏柜已有这个品种；若手中这件品相更好，可用 replace-collection 进行一换一替换。")
+            raise GameError("收藏柜已有这个品种；请留给未来的买家。")
         had_set = _has_set(state, item["kind"])
         _spend(state, energy=1)
         state["inventory"].remove(item)
@@ -887,27 +791,7 @@ def apply_command(state, command, args):
         state["collection"].append(item)
         if not had_set and _has_set(state, item["kind"]) and item["kind"] == "bot":
             state["energy"] += 1
-        _event(state, "collect", "留给自己的星光", f"将「{item['name']}」放入收藏柜。可修理或用更好同款替换；个人珍藏 {len(state['collection'])} 个品种。", item)
-    elif command == "replace-collection":
-        item = _item(state, args[0])
-        _require_unlocked_item(state, item)
-        previous = next((i for i in state["collection"] if i["catalog_id"] == item["catalog_id"]), None)
-        if previous is None:
-            raise GameError("收藏柜没有这个品种；请用 collect 收藏。")
-        if item["condition"] <= previous["condition"]:
-            raise GameError("替换品相必须严格高于柜中同款；相同或更低品相不能替换。")
-        _spend(state, energy=1)
-        # Swap the existing objects in place. Only membership/collected changes;
-        # identity, hidden valuation, provenance and all repair/trade locks stay.
-        inventory_index = state["inventory"].index(item)
-        cabinet_index = state["collection"].index(previous)
-        item["collected"] = True
-        previous["collected"] = False
-        state["inventory"][inventory_index] = previous
-        state["collection"][cabinet_index] = item
-        _event(state, "replace_collection", "收藏换上更好的模样",
-               f"花1精力，用{item['id']}「{item['name']}」({item['condition']}%)替换{previous['id']}({previous['condition']}%)。"
-               "旧件回到货架；两件编号、原标价、来源、修理次数与今日限制全部保留，套装奖励不重复触发。", item)
+        _event(state, "collect", "留给自己的星光", f"将「{item['name']}」永久放入收藏柜。它不再出售；已收藏 {len(state['collection'])} 个品种。", item)
     elif command == "upgrade":
         which = args[0]
         if which not in UPGRADE_RULES:
@@ -940,13 +824,11 @@ def apply_command(state, command, args):
             state["credits"] -= cost
             state["stats"]["days_traded"] += 1
             if old_day == TOTAL_DAYS and state["first_week_result"] == "pending":
-                first_goal = _next_milestone(state)
-                values = _goal_values(state, first_goal)
-                won = all(values[key] >= target for key, target in first_goal["targets"].items())
+                won = state["credits"] >= GOAL["credits"] and len(state["collection"]) >= GOAL["collection"]
                 state["first_week_result"] = "won" if won else "missed"
                 state["phase"] = "week_summary"
                 _event(state, "end", "首周达成 · 星港为你亮灯" if won else "首周结算 · 故事仍在继续",
-                       f"支付{cost}星币维护费后，留下{state['credits']}星币、{len(state['collection'])}种个人珍藏，其中{values['collection']}种计入本阶段目标。"
+                       f"支付{cost}星币维护费后，留下{state['credits']}星币、{len(state['collection'])}种收藏。"
                        + ("首周目标达成！" if won else "首周目标尚未达成，可以继续经营后补齐。")
                        + "使用continue明确进入第8天；所有进度保留。")
             else:
@@ -1057,7 +939,7 @@ def _validate_trades(state):
     ordinary_days = set()
     for index, row in enumerate(history):
         expected_id = sequence - len(history) + index + 1
-        version = 3 if expected_id <= v3_boundary else 4 if expected_id <= imported_boundary else 5 if expected_id <= v5_boundary else TRADE_RULES_VERSION
+        version = 3 if expected_id <= v3_boundary else 4 if expected_id <= imported_boundary else 5 if expected_id <= v5_boundary else VERSION
         if (not isinstance(row, dict) or set(row) != (new_keys if version >= 5 else old_keys)
                 or type(row["rules_version"]) is not int or row["rules_version"] != version
                 or not integer(row["id"], expected_id, expected_id) or not integer(row["day"], 1, state["day"])
@@ -1137,8 +1019,8 @@ def _validate_trades(state):
     pkeys = {"item_id", "item_name", "customer_id", "customer_name", "original_price", "counter_offer", "day", "context", "initial_roll_id", "rules_version", "origin_rules_version"}
     if (not isinstance(pending, dict) or set(pending) != pkeys or state["phase"] != "active"
             or not integer(pending["day"], state["day"], state["day"])
-            or not integer(pending["rules_version"], TRADE_RULES_VERSION, TRADE_RULES_VERSION)
-            or not integer(pending["origin_rules_version"], 3, TRADE_RULES_VERSION)):
+            or not integer(pending["rules_version"], VERSION, VERSION)
+            or not integer(pending["origin_rules_version"], 3, VERSION)):
         fail()
     item = next((i for i in state["inventory"] if i["id"] == pending["item_id"]), None)
     if (item is None or item["last_sale_day"] != state["day"] or pending["item_name"] != item["name"]
@@ -1185,7 +1067,7 @@ def _validate_trades(state):
 def _validate_state(state):
     """Detect damaged/incompatible saves without silently resetting or rerolling."""
     if not isinstance(state, dict) or state.get("version") != VERSION:
-        raise GameError("不兼容或损坏的存档；请保留原文件。v1–v6存档需用对应 import-v1 至 import-v6 复制至全新路径。")
+        raise GameError("不兼容或损坏的存档；请保留原文件。v1–v5存档需用对应 import-v1 至 import-v5 复制至全新路径。")
     integers = {"revision": (0, 10**12), "day": (1, 10**12), "credits": (0, 10**12),
                 "energy": (0, 17), "reputation": (0, 99), "next_crate": (1, 10**12),
                 "next_item": (1, 10**12), "event_seq": (1, 10**12)}
@@ -1233,18 +1115,6 @@ def _validate_state(state):
         expected = MILESTONES[index] if index < len(MILESTONES) else {"id": f"voyage_{index - len(MILESTONES) + 1}", "title": f"星海长航 · 第{index - len(MILESTONES) + 1}章"}
         if not isinstance(row, dict) or row.get("id") != expected["id"] or row.get("title") != expected["title"] or type(row.get("day")) is not int or not 7 <= row["day"] <= state["day"]:
             raise GameError("存档阶段履历损坏。")
-    if "collection_upgrade" not in state:
-        raise GameError("存档缺少收藏规则版本记录；旧档必须复制导入。")
-    collection_upgrade = state["collection_upgrade"]
-    if collection_upgrade is not None:
-        expected = {"from_version", "source_day", "source_phase", "legacy_stage_index"}
-        if (not isinstance(collection_upgrade, dict) or set(collection_upgrade) != expected
-                or type(collection_upgrade["from_version"]) is not int or not 1 <= collection_upgrade["from_version"] <= 6
-                or type(collection_upgrade["source_day"]) is not int or not 1 <= collection_upgrade["source_day"] <= state["day"]
-                or collection_upgrade["source_phase"] not in {"active", "week_summary", "lost"}
-                or type(collection_upgrade["legacy_stage_index"]) is not int
-                or not 0 <= collection_upgrade["legacy_stage_index"] <= len(milestones)):
-            raise GameError("存档收藏过渡记录损坏。")
     migration = state.get("migration")
     if migration is not None and (not isinstance(migration, dict) or set(migration) != {"from_version", "source_day", "source_phase", "stats_scope"} or migration["from_version"] != 1 or type(migration["source_day"]) is not int or not 1 <= migration["source_day"] <= 7 or migration["source_phase"] not in {"active", "won", "lost"} or migration["stats_scope"] != "since_import"):
         raise GameError("存档迁移记录损坏。")
@@ -1298,39 +1168,46 @@ def _validate_state(state):
         if not isinstance(row, dict) or type(row.get("day")) is not int or not 1 <= row["day"] <= state["day"] or not isinstance(row.get("text"), str):
             raise GameError("存档日志损坏。")
     event = state.get("last_event")
-    if not isinstance(event, dict) or event.get("seq") != state["event_seq"] or event.get("type") not in {"start", "buy", "reveal", "repair", "sale", "price", "day", "upgrade", "collect", "replace_collection", "end", "import", "negotiation"} or not isinstance(event.get("title"), str) or not isinstance(event.get("text"), str):
+    if not isinstance(event, dict) or event.get("seq") != state["event_seq"] or event.get("type") not in {"start", "buy", "reveal", "repair", "sale", "price", "day", "upgrade", "collect", "end", "import", "negotiation"} or not isinstance(event.get("title"), str) or not isinstance(event.get("text"), str):
         raise GameError("存档事件损坏。")
     _validate_trades(state)
     _rng(state)
 
 
-def _upgrade_v6_copy(original, source_version):
-    """Explicit copy-only upgrade; one immutable old-rule stage, no play or RNG."""
+def _upgrade_v5_copy(original, source_version):
+    """Copy-only v6 upgrade: preserve promised quotes, old rolls and main RNG."""
     state = copy.deepcopy(original)
     state["version"] = VERSION
-    state["collection_upgrade"] = {"from_version": source_version, "source_day": state["day"],
-        "source_phase": state["phase"], "legacy_stage_index": len(state["milestones"])}
-    _event(state, "import", "收藏开始追求更好的模样",
-           f"v{source_version}进度只读复制至v8；原档、历史骰、随机进度、日期与资源保留，未经营。"
-           "已获里程碑及首周结果保留；当前未完成阶段沿用旧收藏数量条件，下阶段启用品质规则。"
-           "收藏可修理，也可花1精力用更好同款一换一；旧件返回货架。")
+    state["walkins"] = _make_walkins(_rng(state), state["day"])
+    # v1/v2 did not record all sold visits. Conservatively close today's ordinary
+    # slot rather than grant a fresh visit on import. It reopens next day.
+    used = source_version <= 2 or any(row["day"] == state["day"] and row["stage"] == "initial"
+        and row["customer_id"] is None for row in state["roll_history"])
+    state["walkins"]["used"] = int(used)
+    state["management_upgrade"] = {"from_version": source_version, "source_day": state["day"],
+        "source_phase": state["phase"], "source_roll_seq": state["roll_seq"],
+        "walkins_used_on_import": int(used)}
+    if state["negotiation"]:
+        state["negotiation"]["rules_version"] = VERSION
+    _event(state, "import", "小店开始挑选合适的买家",
+           f"v{source_version}进度只读复制至v6；原档、历史骰、随机进度、日期与资源保留，未经营。"
+           "旧待谈还价仍可接受/谢绝/作唯一最终报价，不追溯取消；新初次接待采用公开还价条件与每天1位旅客。"
+           + ("v1/v2未完整记录已售接待，导入当天旅客名额保守视为已用，次日恢复。" if source_version <= 2 else ""))
     return state
 
 
 def _migrate(source_bytes, version):
-    import _legacy_v6
+    import _legacy_v5
     try:
-        source = json.loads(source_bytes)
-        if not isinstance(source, dict) or "collection_upgrade" in source:
-            raise ValueError("an upgraded collection save cannot receive another grace stage")
-        if version == 6:
-            original = source
+        if version == 5:
+            original = json.loads(source_bytes)
+            _legacy_v5._validate_state(original)
         else:
-            original = getattr(_legacy_v6, f"migrate_v{version}")(source_bytes)
-        _legacy_v6._validate_state(original)
-    except (ValueError, TypeError, KeyError, IndexError, OverflowError, _legacy_v6.GameError) as exc:
+            original = getattr(_legacy_v5, f"migrate_v{version}")(source_bytes)
+            _legacy_v5._validate_state(original)
+    except (ValueError, TypeError, KeyError, IndexError, OverflowError, _legacy_v5.GameError) as exc:
         raise GameError(f"v{version}存档无法验证；原文件未改动，请提供完整私有存档而非observation。") from exc
-    return _upgrade_v6_copy(original, version)
+    return _upgrade_v5_copy(original, version)
 
 
 def migrate_v1(source_bytes):
@@ -1351,10 +1228,6 @@ def migrate_v4(source_bytes):
 
 def migrate_v5(source_bytes):
     return _migrate(source_bytes, 5)
-
-
-def migrate_v6(source_bytes):
-    return _migrate(source_bytes, 6)
 
 
 class GameStore:
@@ -1393,8 +1266,8 @@ class GameStore:
     def execute(self, command, *args):
         """Return only public data. Failed commands never change the save or RNG."""
         arity = {"new": 0, "status": 0, "market": 0, "buy": 1, "open": 1, "inspect": 1,
-                 "repair": 1, "price": 2, "sell": (1, 2), "endday": 0, "upgrade": 1, "collect": 1, "replace-collection": 1, "restart": 1,
-                 "continue": 0, "codex": 0, "visitors": 0, "import-v1": 1, "import-v2": 1, "import-v3": 1, "import-v4": 1, "import-v5": 1, "import-v6": 1, "preview-offer": 2,
+                 "repair": 1, "price": 2, "sell": (1, 2), "endday": 0, "upgrade": 1, "collect": 1, "restart": 1,
+                 "continue": 0, "codex": 0, "visitors": 0, "import-v1": 1, "import-v2": 1, "import-v3": 1, "import-v4": 1, "import-v5": 1, "preview-offer": 2,
                  "accept": 1, "decline": 1, "offer": 2}
         if command not in arity:
             raise GameError(f"未知命令：{command}；运行 help 查看用法。")
@@ -1406,13 +1279,13 @@ class GameStore:
                 if self.save_path.exists():
                     raise GameError("已有存档，new 不会重抽；继续 status，或明确 restart --confirm。")
                 state = new_state()
-            elif command in {"import-v1", "import-v2", "import-v3", "import-v4", "import-v5", "import-v6"}:
+            elif command in {"import-v1", "import-v2", "import-v3", "import-v4", "import-v5"}:
                 source = Path(args[0]).expanduser().resolve()
                 if source in {self.save_path, self.observation_path}:
                     raise GameError("导入目标必须是新的路径，不能原地覆盖旧版存档。请使用 --save 新路径。")
                 if self.save_path.exists() or self.observation_path.exists():
                     raise GameError("目标存档或公开画面已存在；导入不会覆盖，请选全新 --save 路径。")
-                state = {"import-v1": migrate_v1, "import-v2": migrate_v2, "import-v3": migrate_v3, "import-v4": migrate_v4, "import-v5": migrate_v5, "import-v6": migrate_v6}[command](source.read_bytes())
+                state = {"import-v1": migrate_v1, "import-v2": migrate_v2, "import-v3": migrate_v3, "import-v4": migrate_v4, "import-v5": migrate_v5}[command](source.read_bytes())
             elif command == "restart":
                 if args != ("--confirm",):
                     raise GameError("重新开始会清空本局；确定后使用 restart --confirm。")

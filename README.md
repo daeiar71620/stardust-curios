@@ -1,6 +1,29 @@
-# 星屑杂货铺 v7 · 每件旧物都有模样
+# 星屑杂货铺 v8 · 收藏也值得慢慢变好
 
-这次修正图鉴的发现边界，并为24件旧物分别绘制原创程序插画。迷路送信蜂有翅膀、触角和信封；发条守夜猫有猫耳、尾巴和发条。
+个人珍藏接受任何品相；阶段目标现在只计算达到当前品相要求的不同藏品。收藏柜可修理，也可花1精力用更好的同款一换一，旧件回到货架。
+
+## 品质收藏目标
+
+| 阶段 | 合格收藏 | 品相门槛 | 合格类别 | 品质主题 |
+|---|---:|---:|---:|---:|
+| 首周站稳脚跟 | 2种 | 70% | 不限 | 不限 |
+| 街区熟面孔 | 5种 | 75% | 至少3类 | 不限 |
+| 夜航灯塔 | 9种 | 80% | 不限 | 至少1套 |
+| 星港地标 | 15种 | 85% | 全5类 | 至少3套 |
+
+品质主题指同一类别的3种不同收藏，且全部达到当前阶段门槛。原来的任意品相3种同类收藏经营收益保持不变。现金、口碑、设施要求及买卖骰子规则均未改变。已获得的里程碑不撤回。
+
+星海长航保持原有收藏17/19/21/23/24种后封顶24、现金每章+3000、口碑最多99；品质门槛86/87/88/89/90%后封顶90%，全5类，主题首章4套、之后5套。不会提出超过24种或5套的要求。
+
+```sh
+python3 engine.py inspect I001
+python3 engine.py repair I001
+python3 engine.py replace-collection I002
+```
+
+`repair`可找货架或收藏柜的物品，仍花2精力、原费用、每件共2次且每天1次；失手仍降品相。`replace-collection`只能用货架中严格更好的同款替换柜中旧件，花1精力，不掷骰；两件的编号、来源、标价、隐藏估值、修理次数和当日限制都保留。满货架也能一换一，不重复触发套装奖励。收藏柜不能直接出售或改价。
+
+本版私档和公开协议为 **version 8**；交易规则标签仍为6。v1–v6仅可明确复制导入全新路径，绝不自动迁移。旧档当前未完成阶段保留旧收藏数量条件，下一阶段启用品质规则；已结算的首周结果与已获里程碑保留。真实游戏没有随本次开发迁移或推进。
 
 ## 图鉴要亲手发现
 
@@ -8,7 +31,7 @@
 - 只有真正开箱才解锁画像与档案。买到未拆封的箱子不会解锁；卖掉已见过的物品也不会忘记
 - “已发现”和“已珍藏”分别计数。收藏套装继续公开进度和经营收益，不列出未知物品的名字
 - CLI与公开observation也遵守同一边界。新版观战器会遮住旧版公开文件里尚未发现的条目
-- 本次是兼容更新，私档和经营规则仍为 **version 6**，无需导入或迁移v6存档。读取 `status` 只刷新公开投影，不推进天数、骰子或游戏资源
+- 读取当前v8的 `status` 只刷新公开投影，不推进天数、骰子或游戏资源。v6旧私档需明确复制导入
 
 v6的经营取舍保持不变：**普通旅客限量且有预算；普通失败不再必送还价**。
 
@@ -72,13 +95,14 @@ python3 engine.py endday
 示例路径是占位符，请选**全新目标**；不会自动迁移或推进真实游戏：
 
 ```sh
-python3 engine.py --save /path/to/new-v6-copy.json import-v5 /path/to/old-v5-save.json
-python3 spectator.py --observation /path/to/new-v6-copy.observation.json
+python3 engine.py --save /path/to/new-v8-copy.json import-v6 /path/to/old-v6-save.json
+python3 spectator.py --observation /path/to/new-v8-copy.observation.json
 ```
 
-v1–v4分别使用 `import-v1` 至 `import-v4`。必须提供完整私档，公开observation不能代替。已有目标私档或投影均不覆盖。
+v1–v5分别使用 `import-v1` 至 `import-v5`。必须提供完整私档，公开observation不能代替。已有目标私档或投影均不覆盖。
 
-- v3/v4历史仍是原D20；v5历史仍是原百分骰。新骰标记v6，不重判旧骰
+- 当前旧阶段的过渡记录写入存档，读取、重启不会重置；v8不能伪装成v6再次导入
+- v6复制保留已承诺的还价、旅客名额、骰史和全部资源。v3/v4历史仍是原D20；v5历史仍是原百分骰。新骰标记v6，不重判旧骰
 - 旧待谈还价已经承诺，**不会因新资格条件被追溯取消**，仍可免费接受/谢绝或作唯一合法最终报价
 - v5复制保留完整资源、随机进度、日期、已用顾客与货物机会；当天已接待普通旅客则新名额视为已用
 - v1/v2缺少完整已售接待记录，导入当天普通旅客名额保守视为已用，次日恢复。旧版原有迁移限制见手册
@@ -107,6 +131,6 @@ python3 simulate_management_v6.py --games 50 --days 40
 
 详见 [店主手册](PLAY_GUIDE.md)、[观察schema](OBSERVATION_SCHEMA.md)、[QA报告](QA_REPORT.md)、[经营试验](BALANCE_REPORT.md)。仿真只测公开策略的有限样本，不等于真人体验或全策略平衡证明。
 
-主要文件：`test_catalog_privacy_v7.py`、`test_catalog_spectator_v7.py`、`engine.py`、`spectator.py`、`_legacy_v1.py`至`_legacy_v5.py`、`test_management_v6.py`、`simulate_management_v6.py`。旧版本的专门测试针对冻结旧引擎，当前通用经营/持久化及v6契约测试针对v6。
+主要文件：`test_collections_v8.py`、`test_collection_spectator_v8.py`、`test_catalog_privacy_v7.py`、`test_catalog_spectator_v7.py`、`engine.py`、`spectator.py`、`_legacy_v1.py`至`_legacy_v6.py`、`test_management_v6.py`、`simulate_management_v6.py`。旧版本的专门测试针对冻结旧引擎，当前通用经营/持久化及v6交易契约测试针对v8引擎。
 
 许可协议尚未选定，本目录未授予额外开源许可。

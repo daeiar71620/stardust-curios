@@ -11,6 +11,7 @@ import argparse
 from functools import lru_cache
 import json
 import math
+import re
 from pathlib import Path
 import time
 from typing import Any
@@ -187,6 +188,104 @@ def public_sale_detail(item, walkins, page=0):
     return result
 
 
+def public_collection_quality(value):
+    """Allow only the engine's published stage assessment; never infer it."""
+    source = as_dict(value)
+    if not source:
+        return {}
+    result = {'min_condition': public_integer(source.get('min_condition'), 0, 100)}
+    for key in ('condition_met', 'counted'):
+        result[key] = source.get(key) if isinstance(source.get(key), bool) else None
+    result['reason'] = source.get('reason') if isinstance(source.get('reason'), str) else None
+    return result
+
+
+def public_collection_action(value, replacement=False):
+    source = as_dict(value)
+    if not source:
+        return {}
+    result = {'available': source.get('available') if isinstance(source.get('available'), bool) else None,
+              'reasons': [v for v in as_list(source.get('reasons')) if isinstance(v, str)],
+              'energy_cost': public_integer(source.get('energy_cost'), 0, 100),
+              'command': source.get('command') if isinstance(source.get('command'), str) else None}
+    if replacement:
+        result['cabinet_item_id'] = source.get('cabinet_item_id') if isinstance(source.get('cabinet_item_id'), str) else None
+        result['cabinet_condition'] = public_integer(source.get('cabinet_condition'), 0, 100)
+    else:
+        result['cost'] = public_integer(source.get('cost'), 0, 10**9)
+    return result
+
+
+def public_collection_progress(value):
+    source = as_dict(value)
+    if not source:
+        return {}
+    result = {key: public_integer(source.get(key), 0, 10**6)
+              for key in ('personal_count', 'qualified_count', 'qualified_categories', 'quality_themes')}
+    result['min_condition'] = public_integer(source.get('min_condition'), 0, 100)
+    result['legacy_grace'] = source.get('legacy_grace') is True
+    result['missing'] = [v for v in as_list(source.get('missing')) if isinstance(v, str)]
+    result['requirements'] = []
+    for row in as_list(source.get('requirements')):
+        row = as_dict(row)
+        if row.get('key') not in ('collection', 'collection_categories', 'quality_themes'):
+            continue
+        result['requirements'].append({
+            'key': row['key'], 'label': row.get('label') if isinstance(row.get('label'), str) else '收藏要求',
+            'current': public_integer(row.get('current'), 0, 10**6),
+            'target': public_integer(row.get('target'), 0, 10**6), 'met': row.get('met') is True})
+    result['categories'] = []
+    for row in as_list(source.get('categories')):
+        row = as_dict(row)
+        if row.get('id') in KINDS:
+            result['categories'].append({'id': row['id'], 'name': KINDS[row['id']],
+                                         'qualified_count': public_integer(row.get('qualified_count'), 0, 10**6),
+                                         'theme_complete': row.get('theme_complete') is True})
+    return result
+
+
+def collection_number(value):
+    return str(value) if value is not None else '?'
+
+
+def public_collection_detail(value, observation=None, page=0):
+    """Join discovered identities only with public, currently visible possessions."""
+    source = as_dict(value)
+    result = dict(public_catalog_entry(source), _view='codex')
+    if not result['discovered']:
+        return result
+    observation = as_dict(observation)
+    supplied = as_dict(source.get('_collection'))
+    if not observation.get('collection_progress') and not supplied:
+        return result
+    rows = []
+    if observation:
+        identity = result.get('art_id')
+        if identity:
+            for location in ('collection', 'inventory'):
+                rows.extend(dict(as_dict(item), location=location)
+                            for item in as_list(observation.get(location))
+                            if as_dict(item).get('art_id') == identity)
+        progress = public_collection_progress(observation.get('collection_progress'))
+    else:
+        rows = as_list(supplied.get('items'))
+        progress = public_collection_progress(supplied.get('progress'))
+    items = []
+    for row in rows:
+        row = as_dict(row)
+        if row.get('location') not in ('collection', 'inventory'):
+            continue
+        item = {key: row.get(key) if isinstance(row.get(key), str) else None for key in ('id', 'location')}
+        item['condition'] = public_integer(row.get('condition'), 0, 100)
+        item['collection_quality'] = public_collection_quality(row.get('collection_quality'))
+        item['repair'] = public_collection_action(row.get('repair'))
+        item['collection_replacement'] = public_collection_action(row.get('collection_replacement'), True)
+        items.append(item)
+    result['_collection'] = {'items': items, 'progress': progress}
+    result['_collection_page'] = max(0, int(number(page)))
+    return result
+
+
 def public_catalog_entry(value, slot=None):
     """Fail closed even for older projections that included unopened identities."""
     source = as_dict(value)
@@ -197,6 +296,8 @@ def public_catalog_entry(value, slot=None):
         for key in ('art_id', 'name', 'kind', 'rarity', 'description'):
             if isinstance(source.get(key), str):
                 result[key] = source[key]
+        if as_dict(source.get('collection_quality')):
+            result['collection_quality'] = public_collection_quality(source['collection_quality'])
     return result
 
 
@@ -454,19 +555,21 @@ class Renderer:
         wrapped = []
         for paragraph in paragraphs:
             current = ''
-            for char in paragraph:
-                if max_width and f.getlength(current + char) > max_width and current:
+            # Keep quantities such as 70%, 0.5% and 1/3 intact in narrow cards.
+            for token in re.findall(r'[+-]?\d+(?:[.,]\d+)*(?:/\d+(?:[.,]\d+)*)?[%％]?|.', paragraph):
+                if max_width and f.getlength(current + token) > max_width and current:
                     wrapped.append(current)
-                    current = char
+                    current = token
                 else:
-                    current += char
+                    current += token
             wrapped.append(current)
         truncated = len(wrapped) > lines
         wrapped = wrapped[:lines]
         if truncated and wrapped:
-            while max_width and f.getlength(wrapped[-1] + '…') > max_width and wrapped[-1]:
-                wrapped[-1] = wrapped[-1][:-1]
-            wrapped[-1] += '…'
+            tokens = re.findall(r'[+-]?\d+(?:[.,]\d+)*(?:/\d+(?:[.,]\d+)*)?[%％]?|.', wrapped[-1])
+            while max_width and f.getlength(''.join(tokens) + '…') > max_width and tokens:
+                tokens.pop()
+            wrapped[-1] = ''.join(tokens) + '…'
         self.words.append(value)
         for i, row in enumerate(wrapped):
             self.draw.text((xy[0], xy[1] + i * size * spacing), row, font=f, fill=color, anchor=anchor)
@@ -960,12 +1063,15 @@ class Renderer:
         goals=g['goals']
         # The public campaign owns all milestone calculations, including reputation.
         pieces=[f"{v.get('label','目标')} {int(number(v.get('current'))):,}/{int(number(v.get('target'))):,}" for v in goals]
-        if len(pieces)>2:
+        if len(pieces)>4:
+            for i,piece in enumerate(pieces[:6]):
+                self.text((x+18+(i%2)*(w-36)/2,y+67+(i//2)*17),piece,14,GOLD,False,(w-42)/2)
+        elif len(pieces)>2:
             for i,piece in enumerate(pieces[:4]):
                 self.text((x+18+(i%2)*(w-36)/2,y+74+(i//2)*22),piece,16,GOLD,False,(w-42)/2)
         else:self.text((x+18,y+79),'  ·  '.join(pieces),18,GOLD,False,w-36)
         fractions=[number(v.get('current'))/max(1,number(v.get('target'),1)) for v in goals]
-        self.progress(x+18,y+h-(12 if len(pieces)>2 else 20),w-36,min(fractions) if fractions else 1,TEAL,h=5)
+        self.progress(x+18,y+h-(7 if len(pieces)>4 else 12 if len(pieces)>2 else 20),w-36,min(fractions) if fractions else 1,TEAL,h=5)
 
     def event_card(self, box, o):
         x,y,w,h=box
@@ -1322,6 +1428,110 @@ class Renderer:
             self.text((x+16,y+54),'店主下次报价后，真实判定会留在这里',18,MUTED,False,w-32,2)
         self.pagination((x,y+h-27,w,27),page,pages)
 
+    def collection_summary(self, box, progress):
+        x,y,w,h=box
+        self.rect((x,y,x+w,y+h),'#233c3e',14,'#466057')
+        n=collection_number
+        self.text((x+14,y+11),f"私藏 {n(progress.get('personal_count'))} 件 · 合格 {n(progress.get('qualified_count'))} 种",20,INK,True,w-28)
+        self.text((x+14,y+40),f"合格类别 {n(progress.get('qualified_categories'))} · 品质主题 {n(progress.get('quality_themes'))}",16,TEAL,False,w-28)
+        rule=('旧档本阶段沿用数量规则' if progress.get('legacy_grace')
+              else f"本阶段品相 ≥{n(progress.get('min_condition'))}%")
+        missing='；'.join(progress.get('missing',[])) or '收藏要求已满足'
+        self.text((x+14,y+65),rule+' · '+missing,15,GOLD,False,w-28)
+        self.text((x+14,y+88),'查看完整要求、类别与主题 ›',14,MUTED,False,w-28)
+        self.hits.append(((x,y,x+w,y+h),('inspect',dict(_view='collection_progress',progress=progress))))
+
+    def collection_progress_detail(self, source):
+        progress=public_collection_progress(source.get('progress'))
+        overlay=Image.new('RGBA',self.image.size,(6,16,24,225))
+        self.image=Image.alpha_composite(self.image.convert('RGBA'),overlay).convert('RGB');self.draw=ImageDraw.Draw(self.image)
+        w=min(self.W-40,710);h=810;x=(self.W-w)/2;y=(self.H-h)/2
+        self.rect((x,y,x+w,y+h),'#263d45',25,TEAL,2)
+        self.hits=[((0,0,self.W,self.H),('close',None))]
+        self.text((x+24,y+24),'本阶段收藏要求',24,INK,True,w-150)
+        self.text((x+w-22,y+30),'点击返回 ×',16,MUTED,anchor='rt')
+        n=collection_number
+        self.text((x+24,y+73),f"私藏总数 {n(progress.get('personal_count'))} 件 · 合格收藏 {n(progress.get('qualified_count'))} 种",21,GOLD,True,w-48)
+        self.text((x+24,y+109),f"合格类别 {n(progress.get('qualified_categories'))} · 品质主题 {n(progress.get('quality_themes'))}",19,TEAL,False,w-48)
+        grace=progress.get('legacy_grace')
+        rule=('旧档保护：仅当前阶段沿用旧数量规则；下一阶段开始按品质要求计数。' if grace
+              else f"合格收藏：不同种类、品相至少 {n(progress.get('min_condition'))}%。同款重复不增加合格种数。")
+        self.text((x+24,y+150),rule,18,INK,False,w-48,3)
+        self.text((x+24,y+226),'本阶段需要',18,TEAL,True,w-48)
+        requirements=progress.get('requirements',[])
+        for i,goal in enumerate(requirements[:3]):
+            yy=y+258+i*31
+            text=f"{goal.get('label')}  {n(goal.get('current'))}/{n(goal.get('target'))}  · {'已满足' if goal.get('met') else '未满足'}"
+            self.text((x+24,yy),text,18,TEAL if goal.get('met') else GOLD,False,w-48)
+        if not requirements:self.text((x+24,y+258),'等待公开阶段要求',18,MUTED,False,w-48)
+        missing='；'.join(progress.get('missing',[])) or '收藏要求已满足'
+        self.text((x+24,y+366),missing,17,GOLD,False,w-48,3)
+        self.line([(x+24,y+439),(x+w-24,y+439)],LINE,1)
+        self.text((x+24,y+456),'品质主题：同一类别 3 种不同旧物，均达本阶段品相门槛',17,TEAL,True,w-48,2)
+        for i,category in enumerate(progress.get('categories',[])[:5]):
+            label=f"{category['name']} · 合格 {n(category.get('qualified_count'))} 种 · {'主题完成' if category.get('theme_complete') else '主题未完成'}"
+            self.text((x+24,y+512+i*31),label,18,TEAL if category.get('theme_complete') else MUTED,False,w-48)
+        self.text((x+24,y+h-99),'普通收藏套装仍按原规则提供经营收益，与阶段品质主题分别计算。',16,MUTED,False,w-48,2)
+        self.text((x+24,y+h-40),'只读说明 · 不推进游戏，也不执行收藏或修理',15,MUTED,False,w-48)
+
+    def collection_item_detail(self, source):
+        item=public_collection_detail(source,page=source.get('_collection_page',0))
+        info=as_dict(item.get('_collection'));items=as_list(info.get('items'))
+        count=len(items);page=int(number(item.get('_collection_page')))%max(1,count)
+        current=as_dict(items[page]) if items else {}
+        overlay=Image.new('RGBA',self.image.size,(6,16,24,225))
+        self.image=Image.alpha_composite(self.image.convert('RGBA'),overlay).convert('RGB');self.draw=ImageDraw.Draw(self.image)
+        w=min(self.W-40,710);h=820;x=(self.W-w)/2;y=(self.H-h)/2
+        self.rect((x,y,x+w,y+h),'#263d45',25,TEAL,2)
+        self.hits=[((0,0,self.W,self.H),('close',None))]
+        self.text((x+24,y+24),'收藏档案 · 公开品相',21,TEAL,True,w-152)
+        self.text((x+w-22,y+29),'点击返回 ×',16,MUTED,anchor='rt')
+        self.item_art(x+22,y+65,84,item)
+        self.text((x+122,y+75),item.get('name','已发现旧物'),26,INK,True,w-146)
+        self.text((x+122,y+117),f"{KINDS.get(item.get('kind'),'旧物')} · {'已珍藏' if item.get('collected') else '已发现'}",18,GOLD,False,w-146)
+        self.text((x+24,y+165),item.get('description') or '故事等待继续。',17,MUTED,False,w-48,2)
+        self.line([(x+24,y+221),(x+w-24,y+221)],LINE,1)
+        if current:
+            n=collection_number
+            in_cabinet=current.get('location')=='collection'
+            label='在柜珍藏' if in_cabinet else '库存同款'
+            self.text((x+24,y+242),f"{label} {current.get('id') or '?'} · 品相 {n(current.get('condition'))}%",23,INK,True,w-48)
+            quality=as_dict(current.get('collection_quality')) or as_dict(item.get('collection_quality'))
+            status='计入本阶段' if quality.get('counted') else '未计入本阶段'
+            self.text((x+24,y+282),status,19,TEAL if quality.get('counted') else GOLD,True,w-48)
+            self.text((x+24,y+315),quality.get('reason') or '等待公开资格说明',18,MUTED,False,w-48,3)
+            repair=as_dict(current.get('repair'))
+            self.text((x+24,y+395),'展柜修理' if in_cabinet else '库存修理',18,TEAL,True,w-48)
+            repair_status='可修理' if repair.get('available') is True else '暂不可修理' if repair.get('available') is False else '等待公开修理条件'
+            self.text((x+24,y+426),f"{repair_status} · {n(repair.get('cost'))} 星币 · {n(repair.get('energy_cost'))} 体力",18,INK,False,w-48)
+            self.text((x+24,y+457),'；'.join(repair.get('reasons',[])) or '每件最多 2 次、每天 1 次；沿用现有费用与效果',16,MUTED,False,w-48,2)
+            if repair.get('command'):self.text((x+24,y+505),'命令：'+repair['command'],18,GOLD,True,w-48)
+            replacement=as_dict(current.get('collection_replacement'))
+            self.text((x+24,y+550),'同款替换 · 严格更高品相 · 一进一出',18,TEAL,True,w-48)
+            if replacement:
+                status='可替换' if replacement.get('available') is True else '暂不可替换'
+                desc=f"{status} · 在柜 {replacement.get('cabinet_item_id') or '?'} 为 {n(replacement.get('cabinet_condition'))}% · {n(replacement.get('energy_cost'))} 体力"
+                self.text((x+24,y+582),desc,17,INK,False,w-48)
+                self.text((x+24,y+613),'；'.join(replacement.get('reasons',[])) or '替换后旧珍藏返回库存，私藏总数不变',16,MUTED,False,w-48,2)
+                if replacement.get('command'):self.text((x+24,y+662),'命令：'+replacement['command'],18,GOLD,True,w-48)
+            elif in_cabinet:
+                candidates=[v for v in items if as_dict(v).get('location')=='inventory']
+                eligible=sum(as_dict(v.get('collection_replacement')).get('available') is True for v in candidates)
+                self.text((x+24,y+585),f'库存同款 {len(candidates)} 件 · 当前可替换 {eligible} 件',18,INK,False,w-48)
+                self.text((x+24,y+619),'翻页查看同款的资格与命令' if candidates else '暂无库存同款；先寻找品相更好的同种旧物',17,MUTED,False,w-48,2)
+            else:self.text((x+24,y+585),'暂无同款在柜珍藏，尚不适用替换',17,MUTED,False,w-48,2)
+        else:
+            self.text((x+24,y+250),'已发现 · 当前未持有',24,GOLD,True,w-48)
+            self.text((x+24,y+302),'发现记录会保留；只有进入展柜并满足本阶段条件，才计入合格收藏。',20,MUTED,False,w-48,3)
+        if count>1:
+            self.text((x+w/2,y+h-83),f'{page+1}/{count} · 逐件查看展柜与库存',16,TEAL,anchor='mt')
+            self.text((x+29,y+h-88),'‹',26,GOLD,True)
+            self.text((x+w-29,y+h-88),'›',26,GOLD,True,anchor='rt')
+            self.hits += [((x+12,y+h-101,x+w*.28,y+h-52),('collection_page',-1)),
+                          ((x+w*.72,y+h-101,x+w-12,y+h-52),('collection_page',1))]
+        self.text((x+24,y+h-36),'只读命令提示 · 点击不会修理或替换',15,MUTED,False,w-48)
+
+
     def codex(self, box, o):
         codex=as_dict(o.get('codex'))
         if not as_list(codex.get('entries')):
@@ -1331,16 +1541,21 @@ class Renderer:
         entries.sort(key=lambda e:(not bool(e.get('collected')),not bool(e.get('discovered'))))
         self.text((x+2,y+5),'旧物图鉴',22,INK,True)
         self.text((x+w-2,y+10),f"发现 {codex.get('discovered',0)}/{codex.get('total',len(entries))} · 珍藏 {codex.get('collected',0)}",17,MUTED,anchor='rt')
-        per_page=max(1,int((h-80)/89));pages=max(1,math.ceil(len(entries)/per_page));page=self.page%pages;self.page_count=pages
+        progress=public_collection_progress(o.get('collection_progress'))
+        start=45
+        if progress:
+            self.collection_summary((x,y+42,w,114),progress)
+            start=166
+        per_page=max(1,int((h-start-28)/89));pages=max(1,math.ceil(len(entries)/per_page));page=self.page%pages;self.page_count=pages
         for i,item in enumerate(entries[page*per_page:(page+1)*per_page]):
-            yy=y+45+i*89
+            yy=y+start+i*89
             found=item.get('discovered');collected=item.get('collected')
             self.rect((x,yy,x+w,yy+80),PANEL,14)
             self.item_art(x+10,yy+9,61,item)
             self.text((x+82,yy+11),item.get('name','???'),21,INK if found else MUTED,True,w-205)
             self.text((x+w-16,yy+15),'已珍藏' if collected else '已发现' if found else '待寻访',17,GOLD if collected else TEAL if found else MUTED,anchor='rt')
             self.text((x+82,yy+43),item.get('description','') if found else '尚未遇见 · 开箱后解锁',16,MUTED,False,w-101)
-            self.hits.append(((x,yy,x+w,yy+80),('inspect',dict(item,_view='codex'))))
+            self.hits.append(((x,yy,x+w,yy+80),('inspect',public_collection_detail(item,o))))
         self.pagination((x,y+h-28,w,28),page,pages)
 
     def visitors(self, box, o):
@@ -1380,7 +1595,10 @@ class Renderer:
 
     def detail_card(self, item):
         if item.get('_view')=='codex' or item.get('discovered') is False:
+            if item.get('discovered') is True and as_dict(item.get('_collection')):
+                return self.collection_item_detail(item)
             item=public_catalog_entry(item)
+        if item.get('_view')=='collection_progress':return self.collection_progress_detail(item)
         if item.get('_view')=='roll':return self.roll_detail(item)
         if item.get('_view')=='negotiation':return self.bargaining_detail(item)
         if item.get('_view')=='sale':return self.sale_detail(item)
@@ -1538,6 +1756,8 @@ class Renderer:
         extra=126 if has_bargaining_preview(o.get('negotiation')) else (32 if has_roll_breakdown(current_roll) and (as_dict(as_dict(o.get('last_event')).get('roll')) or not as_dict(o.get('last_event')).get('type')) else 0)
         self.W,self.H=(1320,940) if wide else ((520,max(1100,round(height/width*520))) if narrow else (760,1240))
         if narrow and extra:self.H=max(self.H,1100+max(0,extra-48))
+        if tab=='collection' and as_dict(o.get('collection_progress')) and not wide:
+            self.H=max(self.H,(1196+max(0,extra-48)) if narrow else (1240+max(0,extra-64)))
         self.image=Image.new('RGB',(self.W,self.H),BG); self.draw=ImageDraw.Draw(self.image)
         self.demo=bool(demo);self.journal_mode='rolls' if journal_mode=='rolls' else 'events'
         self.words=[];self.hits=[];self.tab=tab if tab in dict(TABS) else 'shelf';self.page=max(0,page);self.page_count=1
@@ -1577,7 +1797,7 @@ class Renderer:
             self.current_event((32,473-trim,696,218+extra),o)
             self.goal_card((32,697+shift,696,130),o)
             self.tab_bar((32,843+shift,696,55))
-            self.content((32,914+shift,696,282-shift),o)
+            self.content((32,914+shift,696,self.H-958-shift),o)
         self.line([(32,self.H-33),(self.W-32,self.H-33)],LINE,1)
         status=error or ('演示预览 · 未推进游戏' if self.demo else '首周已结算 · 等店长继续' if o.get('phase')=='week_summary' else '星港只读观战 · 纯虚拟星币')
         self.text((32,self.H-24),status,14,RED if error else MUTED)
@@ -1650,6 +1870,10 @@ class Spectator:
                 count=len(as_list(self.detail.get('sale_options')))
                 self.detail=dict(self.detail,_sale_page=(int(number(self.detail.get('_sale_page')))+action[1])%max(1,count))
                 self.last_signature=None
+            elif action[0]=='collection_page' and as_dict(self.detail).get('_view')=='codex':
+                count=len(as_list(as_dict(self.detail.get('_collection')).get('items')))
+                self.detail=dict(self.detail,_collection_page=(int(number(self.detail.get('_collection_page')))+action[1])%max(1,count))
+                self.last_signature=None
             elif action[0]=='close':self.detail=None;self.last_signature=None
 
     def refresh_detail(self):
@@ -1660,7 +1884,10 @@ class Spectator:
             entries=as_list(as_dict(as_dict(self.reader.observation).get('codex')).get('entries'))
             entry=next((public_catalog_entry(v,slot) for slot,v in enumerate(entries,1)
                         if (public_integer(as_dict(v).get('slot'),1,10**6) or slot)==detail.get('slot')),None)
-            self.detail=dict(entry,_view='codex') if entry else None
+            self.detail=public_collection_detail(entry,self.reader.observation,detail.get('_collection_page',0)) if entry else None
+        elif detail.get('_view')=='collection_progress':
+            progress=public_collection_progress(as_dict(self.reader.observation).get('collection_progress'))
+            self.detail=dict(_view='collection_progress',progress=progress) if progress else None
         elif detail.get('_view')=='sale':
             observation=as_dict(self.reader.observation)
             item=next((v for v in as_list(observation.get('inventory'))

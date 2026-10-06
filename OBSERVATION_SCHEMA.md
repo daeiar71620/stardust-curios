@@ -1,4 +1,29 @@
-# Public observation schema, version 6 (v7 catalog-privacy release)
+# Public observation schema, version 8 (quality-collection release)
+
+## V8 quality collection contract
+
+Top-level protocol 8 is independent of unchanged transaction `rules_version:6`. Existing cash/reputation/upgrade targets, base values, fees, buyer budgets, dice, quotes and item limits are not rebalanced.
+
+- Stage1: 2 distinct cabinet items at condition >=70
+- Stage2: 5 at >=75, across at least 3 qualified categories
+- Stage3: 9 at >=80 and at least 1 quality theme; no category-count constraint
+- Stage4: 15 at >=85, all 5 qualified categories, at least 3 themes
+- Longhaul chapter n: distinct count `min(24,15+2*n)`, condition `min(90,85+n)`, all 5 categories, themes `min(5,3+n)`; original cash `5000+3000*n`, reputation `min(99,40+10*n)` and no new upgrade target
+- A quality theme means at least 3 different cabinet catalog types in one category, all meeting the current threshold. Existing any-condition `collection_sets` benefits are unchanged. Earned milestone records never disappear
+
+`collection_progress` is `{personal_count,qualified_count,qualified_categories,quality_themes,min_condition,legacy_grace,categories,requirements,missing}`. `categories` contains only the 5 public categories as `{id,name,qualified_count,theme_complete}`; it never contains candidate/unknown catalog identities. `requirements` is the current stage's collection/category/theme subset as `{key,label,current,target,met}`. `missing` contains textual unmet counts. Legacy grace has min_condition 0 and a count-only collection requirement. Economic requirements remain in campaign goals.
+
+Every opened public item adds:
+
+- `collection_quality:{min_condition,condition_met,counted,reason}`. `counted` requires cabinet membership. The reason explains a known low-condition item's exact gap, and preserves the option to collect it personally
+- `repair:{available,reasons,cost,energy_cost:2,command}` for cabinet and inventory items. Normal cost, two lifetime attempts, once per day and failure degradation all apply. This display is advisory; execution revalidates atomically
+- `collection_replacement:null` or `{available,reasons,cabinet_item_id,cabinet_condition,energy_cost:1,command}` for an inventory item when a cabinet item has the same catalog type
+
+`replace-collection INVENTORY_ID` requires strictly higher condition and an unlocked item. It swaps membership one-for-one, including a full inventory. Both identities, hidden base values, prices, origin, repair counts and sale/repair day locks survive; only `collected` flags change. No RNG advance, cash or reputation reward, or repeated set activation. `repair` resolves cabinet items explicitly; `sell` and `price` remain inventory-only. The replacement public event type is `replace_collection`.
+
+`collection_upgrade` is null for native 8 or `{from_version:1..6,source_day,source_phase,legacy_stage_index}` on explicit copy import. Its immutable index is the number of earned milestones at import. Grace applies exactly while the earned count equals that index; the next stage uses quality rules, including if multiple milestones are checked by one action. Reads never grant or reset grace. v8 is rejected by all old import routes. Old won/missed first-week outcomes and earned history remain unchanged. Native first-week settlement uses qualified collection; old pending first-week copies retain the single old-stage grace. No actual session is automatically migrated.
+
+The codex entry schema stays unchanged: only discovered entries contain identity fields, and quality details derive from opened public items. Public aggregates never consult unopened cargo.
 
 The spectator and AI player consume only the public observation or CLI output. They must never open the private save. All actions go through `engine.py` / `GameStore.execute`.
 
@@ -23,13 +48,13 @@ Each public item adds `public_reference` and `sale_options`. Reference is the ca
 
 `trade_rules` additionally includes `counter_rule,walkin_daily_limit,walkin_budget_range,walkin_min_condition`. `market` and `visitors` responses include `walkins`; `inspect` includes the item's new public fields. The spectator must consume these fields instead of deriving hidden initial probability.
 
-`management_upgrade`: null for native v6, or `{from_version:1..5,source_day,source_phase,source_roll_seq,walkins_used_on_import}` for copy imports. It preserves the v6 boundary separately from `engine_upgrade`, which still describes earlier D20 boundaries. Old records at or below this sequence keep their original rules, and new records are v6. V5 records and pending quotes are never relabeled to pretend they used v6 eligibility. `walkins_used_on_import` is 0 or 1; any already recorded ordinary initial attempt today consumes today's v6 capacity. V1/v2 lack complete sold-visit records, so copy import conservatively marks today's slot used. Next day restores it.
+`management_upgrade`: null for native v8 (or a directly imported native v6), or `{from_version:1..5,source_day,source_phase,source_roll_seq,walkins_used_on_import}` for copy imports. It preserves the v6 boundary separately from `engine_upgrade`, which still describes earlier D20 boundaries. Old records at or below this sequence keep their original rules, and new records are v6. V5 records and pending quotes are never relabeled to pretend they used v6 eligibility. `walkins_used_on_import` is 0 or 1; any already recorded ordinary initial attempt today consumes today's v6 capacity. V1/v2 lack complete sold-visit records, so copy import conservatively marks today's slot used. Next day restores it.
 
 Old pending quotes are grandfathered even when their ask, category or condition fails today's v6 eligibility. Context budget for old ordinary pending quotes remains null, preserving the original contract. Their final preview and outcome use the unchanged public premium formula without a new hidden budget veto.
 
 ## Shop and campaign fields
 
-- `version`: 6
+- `version`: 8
 - `revision`: monotonic integer for successful mutations; reads and previews do not increment it
 - `day`: ongoing day count; `total_days:7` is the introductory checkpoint, not a campaign cutoff
 - `credits`, `reputation`, `energy`, `max_energy`, `capacity`, `operating_cost`
@@ -52,7 +77,7 @@ Old pending quotes are grandfathered even when their ask, category or condition 
 - `stage_index`: number of earned milestones
 - `first_week_result`: `pending`, `won`, or `missed`; later completion does not rewrite it
 - `completed_milestones`: `[{id,title,day}]`
-- `next_milestone`: `{id,title,description,goals:[{key,label,current,target,met}],ready}`
+- `next_milestone`: `{id,title,description,goals:[{key,label,current,target,met}],ready,min_condition,legacy_grace}`
 - `can_continue`: true only in `week_summary`
 - `continue_command`: `continue` or null
 - `unlimited`: true
@@ -70,7 +95,7 @@ Old pending quotes are grandfathered even when their ask, category or condition 
 - Collection-set descriptions disclose category/count/perk only; they do not list unknown members
 - The new viewer additionally redacts undiscovered entries from older v2–v6 projections that used to include every identity. Unknown illustrations are identical regardless of hidden kind, rarity or name
 
-Save/protocol `version` remains 6: this privacy tightening and additive `art_id`/`slot` metadata do not change save structure, random state, dice rules, economy or import behavior. `status` refreshes a stale public file without changing the private save. Sealed cargo remains private.
+Save/protocol `version` is 8; the v7 catalog release used protocol 6 and must be explicitly copied with `import-v6`. Catalog discovery and masking rules remain unchanged. `status` refreshes a stale current-version public file without changing the private save. Sealed cargo remains private.
 
 `collection_sets`: `[{id,name,description,required:3,current,completed,perk}]`. `current` counts distinct collected types of that kind.
 

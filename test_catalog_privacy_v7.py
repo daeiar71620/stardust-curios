@@ -82,7 +82,7 @@ class CatalogPrivacyV7Tests(unittest.TestCase):
 
     def test_new_game_has_only_opaque_slots_in_every_public_section(self):
         public = self.store.execute("status")
-        self.assertEqual(public["version"], 6)
+        self.assertEqual(public["version"], engine.VERSION)
         self.assert_codex(public["codex"])
         self.assert_no_unseen_identities(public)
         self.assertEqual(len(public["collection_sets"]), 5)
@@ -234,7 +234,7 @@ class CatalogPrivacyV7Tests(unittest.TestCase):
                 imported = engine.GameStore(self.root / f"imported-{version}.json")
                 public = imported.execute(f"import-v{version}", str(source))
                 self.assertEqual(source.read_bytes(), before)
-                self.assertEqual(imported.load()["version"], 6)
+                self.assertEqual(imported.load()["version"], engine.VERSION)
                 self.assertEqual(imported.load()["rng"], json.loads(before)["rng"])
                 self.assert_codex(public["codex"], ["wrench", "lamp", "coffee"], ["wrench"])
                 self.assert_no_unseen_identities(public, ["wrench", "lamp", "coffee"])

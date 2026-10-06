@@ -214,7 +214,7 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(self.load()["inventory"], [])
         self.assert_rejected_unchanged("sell", item_id)
 
-    def test_collect_removes_item_and_is_irreversible(self):
+    def test_collect_removes_item_and_cannot_sell_directly(self):
         item_id = self.cargo()
         before = self.load()
         result = self.store.execute("collect", item_id)
@@ -224,7 +224,7 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(result["credits"], before["credits"])
         self.assertEqual(result["energy"], before["energy"] - 1)
         self.assertEqual(self.store.execute("inspect", item_id)["id"], item_id)
-        for command in ["sell", "repair", "collect"]:
+        for command in ["sell", "collect"]:
             self.assert_rejected_unchanged(command, item_id)
 
     def test_duplicate_catalog_cannot_be_collected(self):

@@ -1,13 +1,13 @@
 """Paired synthetic new games, decisions only from public observation.
 No existing save is opened. No parameters, costs, probabilities, or state are
-monkeypatched. Baseline is the frozen v5 module; candidate is production v6.
+monkeypatched. Baseline is the frozen v5 module; candidate is frozen v6.
 """
 import argparse
 import hashlib
 import json
 from pathlib import Path
 import statistics
-import engine
+import _legacy_v6 as engine
 import _legacy_v5
 
 

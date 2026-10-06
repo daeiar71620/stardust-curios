@@ -67,7 +67,7 @@ class ManagementV6Tests(unittest.TestCase):
 
     def test_public_walkin_capacity_budget_and_no_private_fields(self):
         state=fixture();public=self.write(state)
-        self.assertEqual(public['version'],6)
+        self.assertEqual(public['version'],engine.VERSION)
         self.assertEqual(public['walkins']['remaining'],1)
         self.assertEqual(public['walkins']['budget_range'],[60,120])
         self.assertEqual(public['walkins']['min_condition'],45)
@@ -268,7 +268,7 @@ class ManagementV6Tests(unittest.TestCase):
                 self.assertEqual(source.read_bytes(),raw)
                 for field in ('credits','inventory','crates','collection','upgrades','rng','day','energy'):
                     self.assertEqual(json.loads(raw)[field] | {"display": 0} if version==1 and field=="upgrades" else json.loads(raw)[field],result[field],field)
-                self.assertEqual(result['version'],6)
+                self.assertEqual(result['version'],engine.VERSION)
                 self.assertEqual(result['roll_history'],state.get('roll_history',[]))
                 self.assertEqual(public['walkins']['used'],int(version<=2))
                 with self.assertRaises(engine.GameError):store.execute(f'import-v{version}',str(source))
