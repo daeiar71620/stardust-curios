@@ -4,10 +4,10 @@
 
 ## 操作后同步手机网页
 
-`tools/web_sync/action_publish.py` 提供统一入口：执行一条已经选定的官方操作，保存结果，再同步到已核实的私人网页，并检查服务器回执。相同操作ID重试不会再次操作游戏；上传失败只恢复同步。不替AI作选择，也不自动开局、迁移或继续到第八天。
+`tools/web_sync/shop.py` 通过固定的私有当前店铺配置执行一条已经选定的官方操作，保存结果，再同步到已核实的私人网页，并检查服务器回执。相同操作ID重试不会再次操作游戏；上传失败只恢复同步。不替AI作选择，也不自动开局、迁移或继续到第八天。
 
 ```sh
-python3 tools/web_sync/action_publish.py --config /absolute/private/config.local.json
+python3 tools/web_sync/shop.py --current /absolute/private/current-shop.json
 ```
 
 配置示例、隐藏stdin输入、开局授权、会话绑定及中断恢复见 [同步运行手册](tools/web_sync/SESSION_RUNBOOK.md)。运行配置、回执、真实存档与已发现图片留在私有目录；仓库只含通用工具和合成测试。使用需要兼容回执协议的私人服务端，本代码包不包含个人网站部署或凭据。
@@ -162,3 +162,9 @@ python3 simulate_management_v6.py --games 50 --days 40
 主要文件：`test_budget_curve_v9.py`、`test_budget_audit_v9.py`、`test_budget_spectator_v9.py`、`test_collections_v8.py`、`test_collection_spectator_v8.py`、`test_catalog_privacy_v7.py`、`test_catalog_spectator_v7.py`、`engine.py`、`spectator.py`、`_legacy_v1.py`至`_legacy_v6.py`、`_legacy_v8.py`、`test_management_v6.py`、`simulate_management_v6.py`。旧版本的专门测试针对冻结旧引擎，当前通用经营/持久化及兼容交易契约测试针对v9引擎。
 
 许可协议尚未选定，本目录未授予额外开源许可。
+
+## 固定当前店铺与自动同步
+
+现在可通过私有的current-shop.json固定入口操作当前游戏；一次命令完成已授权的复制升级、原子切换与公开画面同步，换档不再需要重建网站。旧会话上传会被epoch保护拒绝，重复操作ID不会重新执行。完整步骤与恢复说明见[运行手册](tools/web_sync/SESSION_RUNBOOK.md)。
+
+本轮在临时存档完成全项目测试和81步完整链路检查；性能数据与限制见[性能报告](PERFORMANCE_REPORT.md)。测试与基准源码均保留，实际存档、凭据和运行配置不在发布包里。

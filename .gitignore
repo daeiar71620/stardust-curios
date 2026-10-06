@@ -42,3 +42,9 @@ credentials*.json
 **/known-art/
 **/private-images/
 **/runtime/
+
+# Current-shop pointer and switch recovery records are private runtime data.
+current-shop.json
+*.current-shop.json
+*.switches/
+.pytest_cache/

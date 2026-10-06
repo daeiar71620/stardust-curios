@@ -1,3 +1,23 @@
+# Current-Shop Switch and Pipeline Optimization Verification
+
+Verified 2026-10-06. This release uses the final frozen current-shop source; packaging changes only the README, this QA introduction, runtime ignore rules, and the release manifest. Game formulas and engine/viewer sources remain unchanged from v9.
+
+## Final verification scope
+
+- **465 game tests and 61 helper tests pass** against the final combined source. The helper suite includes 49 controller/exporter tests, 10 switch tests, and the two preserved real-v9-CLI/mock-HTTP tests in `tools/web_sync/tests/test_v9_cli_integration.py`.
+- The separately maintained private Site passed **10 frontend tests and 4 activation-SQL tests**, TypeScript and lint. Together these are 540 checked cases; the public game bundle contains the game/helper suites, not that owner-specific Site checkout.
+- The official CLI completed the full 81-action synthetic first week with 82 successful mocked publication acknowledgements. Baseline and candidate public action/state transcript hashes match exactly; duplicate IDs were suppressed and an injected transient publication failure recovered without replaying gameplay.
+- The incremental exporter produces the same 24 synthetic known PNGs and contact sheet as the old exporter for equal inputs. Warm cache, corrupt/missing art, changed effective public paint, renderer changes, interrupted switches, stale activation epochs and preserved operation history are covered.
+- The complete tests ran before source freeze. Packaging reuses those results and rechecks source hashes, Python compilation, manifest contents, and the clean ZIP; it does not rerun or claim a new combined aggregate.
+
+## Performance and boundaries
+
+Two matched alternating synthetic comparisons measured full-week mean 22.57 → 21.37 seconds (about 5.3%) and per-action P95 1.29 → 0.64 seconds. Ordinary-action median was effectively unchanged (142 → 145 ms). These are local mock-HTTP measurements, not a guaranteed speedup; Internet, Site storage and phone latency were not measured. Correcting stale effective painting increased changed-image traffic in the synthetic week (3.25 → 3.90 MB) with the same number of successful requests. See [PERFORMANCE_REPORT.md](PERFORMANCE_REPORT.md) for samples, tradeoffs and reproduction.
+
+Only public-safe source, docs, tests, benchmark/smoke scripts and historical synthetic aggregate statistics are distributed. Real saves, observations, Site URLs/IDs/credentials, current-shop pointers, activation/operation receipts, runtime configuration, generated demos, images and caches are excluded. Live deployment, actual session switching and production latency verification are separate from this synthetic release validation.
+
+---
+
 # Combined v9 Budget + Action/Publish Release Verification
 
 Verified 2026-10-06. The v9 engine/viewer/test sources below are unchanged from the validated 465-test budget release. Public-safe synchronization helpers are now packaged under `tools/web_sync/`; the prior budget-only ZIP remains separate.

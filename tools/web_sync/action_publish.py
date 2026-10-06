@@ -154,14 +154,41 @@ def valid_png(path):
 
 
 def render_known(c, observation, lock_fd):
-    ids = known_art(observation)
-    if all(valid_png(c['art_dir']/(i+'.png')) for i in ids): return
-    subprocess.run(['python3',str(Path(__file__).with_name('export_known_art.py')),'--observation',str(c['observation_path']),'--renderer',str(c['renderer_path']),'--output',str(c['art_dir'])], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, pass_fds=(lock_fd,), timeout=45, check=True)
+    # Warm syncs avoid another process. Cache misses remain bounded and inherit
+    # the game lock so a killed parent cannot overlap a still-running exporter.
+    from export_known_art import cache_ready
+    if c['art_dir'].resolve() in {c['observation_path'].parent.resolve(), c['renderer_path'].parent.resolve()}:
+        raise Stop('separate_art_directory_required')
+    if cache_ready(observation, c['renderer_path'], c['art_dir']):
+        return
+    subprocess.run([
+        sys.executable, str(Path(__file__).with_name('export_known_art.py')),
+        '--observation', str(c['observation_path']),
+        '--renderer', str(c['renderer_path']), '--output', str(c['art_dir']),
+        '--no-preview',
+    ], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL, pass_fds=(lock_fd,), timeout=45, check=True)
 
 class Controller:
     def __init__(self, config, token, transport=real_transport, runner=official_runner, renderer=render_known, sleeper=time.sleep):
         self.c=validate_config(config); self.token=token; self.transport=transport; self.runner=runner; self.renderer=renderer; self.sleep=sleeper
         self.ops=self.c['journal']/'operations'; self.state_path=self.c['journal']/'publication.json'
+        # A verified activation may receive a newer server epoch. The original
+        # config still identifies this game's binding and operation journal.
+        self.publication_epoch = self.c['session_epoch']
+        self._cache_active = False
+        self._pending_cache = None
+
+    @contextlib.contextmanager
+    def execution_cache(self):
+        """Reuse validated receipts only while this execution owns game_lock."""
+        self._cache_active = True
+        self._pending_cache = None
+        try:
+            yield
+        finally:
+            self._pending_cache = None
+            self._cache_active = False
     def observation(self):
         p=self.c['observation_path']
         if p.is_symlink(): raise Stop('public_symlink_forbidden')
@@ -173,14 +200,63 @@ class Controller:
         return read_json(self.state_path) if self.state_path.exists() else {}
     def write_op(self, rec, stage, **extra):
         rec.update(extra,stage=stage,updated_at=time.time());atomic_json(self.ops/(rec['operation_id']+'.json'),rec)
+        if self._pending_cache is not None:
+            self._pending_cache[rec['operation_id']] = rec
     def pending(self):
-        records=[read_json(p) for p in sorted(self.ops.glob('*.json'))] if self.ops.exists() else []
+        if self._cache_active and self._pending_cache is not None:
+            return list(self._pending_cache.values())
+        paths = sorted(self.ops.glob('*.json')) if self.ops.exists() else []
+        records = [read_json(path) for path in paths]
         allowed={'intent','running','uncertain','committed_projection_pending','committed','sync_pending','published','rejected','resolved_committed','resolved_abandoned','resolved_sync_pending'}
-        for rec in records:
-            if rec.get('schema_version')!=1 or rec.get('config_fingerprint')!=self.c['fingerprint'] or rec.get('stage') not in allowed: raise Stop('invalid_operation_receipt')
+        for path, rec in zip(paths, records):
+            if not isinstance(rec, dict) or rec.get('schema_version')!=1 or rec.get('config_fingerprint')!=self.c['fingerprint'] or rec.get('stage') not in allowed or not isinstance(rec.get('operation_id'), str) or not ID.fullmatch(rec['operation_id']) or path.stem != rec['operation_id']: raise Stop('invalid_operation_receipt')
+        if self._cache_active:
+            self._pending_cache = {rec['operation_id']: rec for rec in records}
         return records
+
+    def record_publication(self, observation, ack, *, request_sha256, art_hashes):
+        """Record a verified upload or activation acknowledgement without POST.
+
+        The caller must hold game_lock. Activation callers also hold their
+        Site-wide lock and set publication_epoch from the verified activation.
+        Nothing here changes the stable game binding or replays an action.
+        """
+        revision = observation['revision']
+        if type(self.publication_epoch) is not int or self.publication_epoch < self.c['session_epoch']:
+            raise Stop('invalid_publication_epoch')
+        if not isinstance(ack, dict) or ack.get('ok') is not True or ack.get('revision') != revision or ack.get('session_id') != self.c['session_id'] or ack.get('session_epoch') != self.publication_epoch or ack.get('request_sha256') != request_sha256 or not re.fullmatch(r'[a-f0-9]{64}', str(ack.get('digest', ''))) or not re.fullmatch(r'[a-f0-9]{64}', str(request_sha256)):
+            raise Stop('publication_ack_scope_mismatch')
+        if not isinstance(art_hashes, dict) or set(art_hashes) != known_art(observation) or any(not re.fullmatch(r'[a-f0-9]{64}', str(value)) for value in art_hashes.values()):
+            raise Stop('invalid_art_receipt')
+        source_hash = digest(observation)
+        if digest(self.observation()) != source_hash:
+            raise Stop('source_changed_during_publication')
+        records = self.pending()
+        previous = self.state()
+        if previous.get('session_epoch', 0) > self.publication_epoch:
+            raise Stop('stale_publication_epoch')
+        if previous.get('revision', -1) > revision:
+            raise Stop('source_revision_rollback')
+        if previous.get('revision') == revision and previous.get('source_hash') != source_hash:
+            raise Stop('same_revision_source_conflict')
+        if any(rec.get('revision_after', -1) > revision for rec in records):
+            raise Stop('projection_refresh_required')
+        saved = {'session_id': self.c['session_id'], 'session_epoch': self.publication_epoch,
+                 'revision': revision, 'source_hash': source_hash, 'server_digest': ack['digest'],
+                 'request_sha256': request_sha256, 'art_hashes': art_hashes,
+                 'published_at': ack.get('published_at'), 'acknowledged_at': time.time()}
+        atomic_json(self.state_path, saved)
+        for rec in records:
+            if rec['stage'] in ('committed', 'sync_pending', 'resolved_sync_pending') and rec.get('revision_after', revision+1) <= revision:
+                self.write_op(rec, 'published', published_revision=revision)
+        return {'ok': True, 'revision': revision, 'verification': 'server_commit_ack'}
+
     def publish(self, observation):
+        if type(self.publication_epoch) is not int or self.publication_epoch < self.c['session_epoch']:
+            raise Stop('invalid_publication_epoch')
         previous=self.state(); revision=observation['revision']; source_hash=digest(observation)
+        if previous.get('session_epoch', 0) > self.publication_epoch:
+            raise Stop('stale_publication_epoch')
         if any(r.get('revision_after',-1)>revision for r in self.pending()): raise Stop('projection_refresh_required')
         if previous.get('revision',-1)>revision: raise Stop('source_revision_rollback')
         if previous.get('revision')==revision and previous.get('source_hash')!=source_hash: raise Stop('same_revision_source_conflict')
@@ -194,10 +270,10 @@ class Controller:
             data=image_path.read_bytes()
             if len(data)>300000 or data[:8]!=b'\x89PNG\r\n\x1a\n': raise Stop('invalid_known_png')
             hashes[identity]=hashlib.sha256(data).hexdigest()
-            if previous.get('art_hashes',{}).get(identity)!=hashes[identity]: artwork[identity]=base64.b64encode(data).decode()
+            if previous.get('session_epoch') != self.publication_epoch or previous.get('art_hashes',{}).get(identity)!=hashes[identity]: artwork[identity]=base64.b64encode(data).decode()
         play_state='finished' if observation['phase'] in ('week_summary','lost') else 'ready'
         from datetime import datetime,timezone
-        payload={'stream_id':'main','session_id':self.c['session_id'],'session_epoch':self.c['session_epoch'],'play_state':play_state,'source_saved_at':datetime.fromtimestamp(self.c['observation_path'].stat().st_mtime,timezone.utc).isoformat(),'observation':observation,'artwork':artwork}
+        payload={'stream_id':'main','session_id':self.c['session_id'],'session_epoch':self.publication_epoch,'play_state':play_state,'source_saved_at':datetime.fromtimestamp(self.c['observation_path'].stat().st_mtime,timezone.utc).isoformat(),'observation':observation,'artwork':artwork}
         ack=None
         for attempt in range(3):
             try:
@@ -210,18 +286,15 @@ class Controller:
             except TransientNetwork:
                 if attempt==2: raise Stop('publication_retry_exhausted')
             if attempt<2: self.sleep(attempt+1)
-        if not isinstance(ack,dict) or ack.get('ok') is not True or ack.get('revision')!=revision or ack.get('session_id')!=self.c['session_id'] or ack.get('session_epoch')!=self.c['session_epoch'] or ack.get('request_sha256')!=hashlib.sha256(request_bytes(payload)).hexdigest() or not re.fullmatch(r'[a-f0-9]{64}',str(ack.get('digest',''))): raise Stop('publication_ack_scope_mismatch')
-        saved={'session_id':self.c['session_id'],'session_epoch':self.c['session_epoch'],'revision':revision,'source_hash':source_hash,'server_digest':ack['digest'],'request_sha256':ack['request_sha256'],'art_hashes':hashes,'published_at':ack.get('published_at'),'acknowledged_at':time.time()}
-        atomic_json(self.state_path,saved)
-        for rec in self.pending():
-            if rec['stage'] in ('committed','sync_pending','resolved_sync_pending') and rec.get('revision_after',revision+1)<=revision:
-                self.write_op(rec,'published',published_revision=revision)
-        return {'ok':True,'revision':revision,'new_art_count':len(artwork),'verification':'server_commit_ack'}
+        result = self.record_publication(observation, ack,
+                                        request_sha256=hashlib.sha256(request_bytes(payload)).hexdigest(),
+                                        art_hashes=hashes)
+        return {**result, 'new_art_count': len(artwork)}
     def execute(self, request):
         mode=request.get('mode','action'); opid=request.get('operation_id')
         if mode not in ('action','sync','reconcile'): raise Stop('invalid_mode')
         if mode!='sync' and (not isinstance(opid,str) or not ID.fullmatch(opid)): raise Stop('invalid_operation_id')
-        with game_lock(self.c['save_path']) as lock_fd:
+        with game_lock(self.c['save_path']) as lock_fd, self.execution_cache():
             self.lock_fd=lock_fd
             binding_path=Path(str(self.c['save_path'])+'.action-publish.binding.json')
             binding={'config_fingerprint':self.c['fingerprint'],'journal':str(self.c['journal'])}
@@ -255,7 +328,7 @@ class Controller:
                 return {'ok':existing['stage'] not in ('rejected',),'operation_id':opid,'stage':existing['stage'],'engine_executed':False,'revision':existing.get('revision_after'),'resolution_basis':existing.get('resolution_basis')}
             if any(r['stage'] in ('running','intent','uncertain','committed_projection_pending') for r in self.pending()): raise Stop('unresolved_prior_action')
             # Bring any prior committed state up to date before another action.
-            if published.get('revision')!=current['revision'] or published.get('source_hash')!=digest(current): self.publish(current)
+            if published.get('session_epoch') != self.publication_epoch or published.get('revision')!=current['revision'] or published.get('source_hash')!=digest(current): self.publish(current)
             rec={'schema_version':1,'operation_id':opid,'session_id':self.c['session_id'],'session_epoch':self.c['session_epoch'],'config_fingerprint':self.c['fingerprint'],'action':action,'action_hash':action_hash,'revision_before':current['revision'],'created_at':time.time()}
             self.write_op(rec,'intent');self.write_op(rec,'running')
             try: code=self.runner(self.c,action,lock_fd)

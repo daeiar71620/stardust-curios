@@ -27,7 +27,9 @@
 
 真实原话、私有网址、项目ID和运行路径留在当前私有任务交接中。不要写入公共仓库。授权证据不能塞进HTTP头或上传内容来代替审核；也不能绕过拒绝。
 
-## 3. 单一入口
+## 3. 单次操作控制器（兼容入口）
+
+后续会话统一使用下文固定的 `shop.py` 当前店铺入口；本节说明底层控制器协议。不要同时绕过当前店铺锁运行两种入口。
 
 ```text
 python3 tools/web_sync/action_publish.py --config /absolute/private/config.local.json
@@ -100,4 +102,59 @@ sync只上传当前公开状态，不操作游戏：
 python3 -m unittest discover -s tools/web_sync/tests -v
 ```
 
-测试全部使用临时合成状态与假的HTTP响应。23项控制器测试使用假的引擎执行器；2项跨集成测试运行本仓库真实v9 CLI与画像导出器，覆盖入口、购买、开箱、重复操作ID和上传失败恢复。不会运行用户真实游戏，不会向生产写入合成状态。Pillow仅在需要导出新发现图片时使用，沿用游戏的既有依赖。
+测试使用临时合成存档和假的HTTP响应，既有假的引擎执行器故障测试，也保留真实官方CLI的集成测试。不会运行用户真实游戏，不会向生产写入合成状态。Pillow仅在需要导出新发现图片时使用，沿用游戏的既有依赖。
+
+## 8. 性能与等价性核验
+
+同步过程保留原有文件锁、私档/公开投影原子保存、fsync和操作ID去重，不更改游戏公式或随机数：
+
+- 已知图片缓存按渲染器内容、尺寸和公开绘画字段校验；文件还要通过PNG格式与SHA-256核验。只重画缺失、损坏或输入改变的已知图片。每步同步不再生成联系表；独立导出仍默认生成，`--no-preview`可明确关闭
+- 同一次独占游戏锁期间，历史操作回执只完整读取和校验一次；新回执写入成功后才进入本次内存索引。离开锁就丢弃索引，下一次调用重新检查磁盘。不会因长期缓存而漏掉中断恢复或损坏记录
+- `publication_epoch`只是已核实切换得到的当前发布租约；原配置、绑定和操作日志身份保持不变。再次激活旧游戏不会得到一套空白操作ID历史。激活成功可保存核实后的回执，不需要紧接着再上传同一状态
+- 网络仍只接受固定目的地的服务端提交回执。图片是否已上传，只根据成功确认后的哈希记录决定。失败不更新缓存，不重复游戏动作
+
+以下检查只生成临时合成存档、图片与回执，结束时自动清理，保留测试脚本。不要以真实私档替代其临时目录，也不要把测试接到生产HTTP接口。
+
+```text
+python3 -m unittest discover -s tools/web_sync/tests -v
+python3 tools/web_sync/smoke_pipeline.py --game .
+python3 tools/web_sync/benchmark_pipeline.py --game . --output /tmp/stardust-pipeline-timings.json
+```
+
+`smoke_pipeline.py`使用官方CLI完成一轮合成首周，每步都做公开投影、已知图片导出和模拟上传回执，检查重复ID不重做动作、临时上传失败只重传、未知条目不泄露，以及第7天结算后停止。`benchmark_pipeline.py`分别计时加载、保存、投影、CLI、导图、请求准备和历史回执扫描；其中HTTP是内存模拟，结果不代表真实公网、Sites或手机延迟。
+
+## 固定的“当前店铺”入口
+
+新入口使用一个私有 current-shop.json 文件，平时操作不用再选存档路径：
+
+```text
+python3 tools/web_sync/shop.py --current /absolute/private/current-shop.json
+```
+
+隐藏输入仍是access、唯一operation_id和一条action。入口读取当前店铺的已验证配置，执行后自动同步。所有现代操作与切换共用此文件及其锁；不要同时绕过入口运行旧脚本。
+
+切换到一份已经准备好的游戏：
+
+```text
+python3 tools/web_sync/shop.py --current /absolute/private/current-shop.json --target-config /absolute/private/next/config.local.json
+```
+
+```json
+{"access":{"project_id":"VERIFIED_PROJECT_ID","token":"FROM_TOOL_MEMORY_ONLY"},"mode":"switch","switch_id":"unique-switch-id"}
+```
+
+若需把v8复制到新的v9目标，在同一请求加入copy_import：
+
+```json
+{"copy_import":{"source_save_path":"/absolute/private/old-game.json","source_observation_path":"/absolute/private/old-game.observation.json"}}
+```
+
+使用官方默认save.json与observation.json时，额外提供source_engine_path，准确指向旧版本engine.py以验证默认文件配对。旧私档只交给官方import-v8读取；不会覆盖来源。目标已存在时不会重新导入；复制结果不确定时先只读status核对，不重做导入。
+
+候选公开画面和所有已知图片先准备好，再由owner鉴权的服务器以expected_epoch原子激活。每次激活返回新的递增epoch，同一switch_id的重试只返回原结果；过期切换不能把新版店铺改回旧店铺。图片按激活命名空间保存，失败的准备或上传不会污染当前店铺。切换不需要重新部署网站。
+
+公开状态未变化时网页收到304，不再反复下载整份记录；仍每2秒检查，并保留上次进展时间与断线提示。
+
+若切换时进程中断，当前文件会保留switching状态并阻止游戏操作。使用同一switch_id和mode=recover_switch恢复：服务器若已激活目标，只补齐本地指针；尚未激活则完成原切换；若另一个更晚的切换已生效则停止，绝不回退它。不会为了恢复网页再运行一次游戏动作或复制导入。
+
+跨会话的运行期epoch与原来的操作ID账本分开保存。重新激活同一游戏仍保留它所有操作ID，重复ID不会再操作一次。旧版直接action_publish入口仅用于兼容；后续会话应统一使用固定shop入口。

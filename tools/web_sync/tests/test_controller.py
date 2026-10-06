@@ -10,6 +10,7 @@ import sys
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from action_publish import Controller,Stop,HttpProblem,TransientNetwork,atomic_json,game_lock,digest,request_bytes
 from public_projection import sanitize
@@ -163,5 +164,158 @@ class Harness(unittest.TestCase):
         self.assertEqual(self.calls,[])
         config=dict(self.config);config['observation_path']=config['save_path']
         with self.assertRaises(Stop):Controller(config,'token')
+
+    def test_journal_is_scanned_once_per_exclusive_execution(self):
+        import action_publish
+        c = self.make()
+        self.sync(c)
+        for index in range(150):
+            operation_id = 'past-' + str(index)
+            atomic_json(c.ops/(operation_id+'.json'), {
+                'schema_version': 1, 'operation_id': operation_id,
+                'config_fingerprint': c.c['fingerprint'], 'stage': 'published',
+                'revision_after': 1})
+        original = action_publish.read_json
+        reads = []
+        def counted(path):
+            if Path(path).parent == c.ops:
+                reads.append(Path(path).name)
+            return original(path)
+        with patch.object(action_publish, 'read_json', side_effect=counted):
+            self.action(c)
+        self.assertEqual(len(reads), 150)
+        self.assertEqual(len(set(reads)), 150)
+        self.assertFalse(c._cache_active)
+        self.assertIsNone(c._pending_cache)
+
+    def test_journal_cache_never_hides_damage_between_executions(self):
+        c = self.make()
+        self.action(c)
+        path = c.ops/'op1.json'
+        receipt = json.loads(path.read_text())
+        receipt['config_fingerprint'] = 'tampered'
+        atomic_json(path, receipt)
+        with self.assertRaises(Stop) as error:
+            self.action(c, op='op2')
+        self.assertEqual(error.exception.code, 'invalid_operation_receipt')
+        self.assertEqual(len(self.calls), 1)
+        self.assertIsNone(c._pending_cache)
+
+    def test_journal_file_cannot_alias_another_operation_id(self):
+        c = self.make()
+        self.action(c)
+        receipt = json.loads((c.ops/'op1.json').read_text())
+        atomic_json(c.ops/'alias.json', receipt)
+        with self.assertRaises(Stop) as error:
+            self.sync(c)
+        self.assertEqual(error.exception.code, 'invalid_operation_receipt')
+
+    def test_new_publication_epoch_preserves_journal_and_deduplication(self):
+        c = self.make()
+        self.action(c)
+        fingerprint, journal = c.c['fingerprint'], c.c['journal']
+        c.publication_epoch = 4
+        self.sync(c)
+        self.assertEqual(self.posts[-1]['session_epoch'], 4)
+        self.assertEqual(c.state()['session_epoch'], 4)
+        self.assertEqual((c.c['fingerprint'], c.c['journal']), (fingerprint, journal))
+        self.assertFalse(self.action(c)['engine_executed'])
+        self.assertEqual(len(self.calls), 1)
+
+    def test_old_epoch_ack_is_rejected_after_activation(self):
+        c = self.make()
+        c.publication_epoch = 4
+        def stale_ack(url, token, body):
+            ack = self.transport(url, token, body)
+            ack['session_epoch'] = 3
+            return ack
+        c.transport = stale_ack
+        with self.assertRaises(Stop) as error:
+            self.sync(c)
+        self.assertEqual(error.exception.code, 'publication_ack_scope_mismatch')
+
+    def test_activation_receipt_prevents_redundant_presync(self):
+        c = self.make()
+        self.sync(c)
+        c.publication_epoch = 4
+        ack = {'ok': True, 'revision': 1, 'session_id': c.c['session_id'],
+               'session_epoch': 4, 'request_sha256': 'b'*64, 'digest': 'a'*64,
+               'published_at': 'fixture-time'}
+        before = len(self.posts)
+        with game_lock(c.c['save_path']):
+            c.record_publication(c.observation(), ack, request_sha256='b'*64, art_hashes={})
+        self.assertEqual(len(self.posts), before)
+        self.action(c)
+        self.assertEqual(len(self.posts), before+1)
+        self.assertEqual(c.state()['session_epoch'], 4)
+
+    def test_activation_receipt_requires_exact_public_source_and_art_scope(self):
+        c = self.make()
+        ack = {'ok': True, 'revision': 1, 'session_id': c.c['session_id'],
+               'session_epoch': 3, 'request_sha256': 'b'*64, 'digest': 'a'*64}
+        with game_lock(c.c['save_path']):
+            with self.assertRaises(Stop) as error:
+                c.record_publication(c.observation(), ack, request_sha256='b'*64,
+                                     art_hashes={'undiscovered': 'c'*64})
+            self.assertEqual(error.exception.code, 'invalid_art_receipt')
+            source = c.observation()
+            atomic_json(self.public, observation(2))
+            with self.assertRaises(Stop) as error:
+                c.record_publication(source, ack, request_sha256='b'*64, art_hashes={})
+            self.assertEqual(error.exception.code, 'source_changed_during_publication')
+        self.assertFalse(c.state_path.exists())
+
+    def test_invalid_runtime_epoch_cannot_upload(self):
+        for epoch in (0, 2, True, '4'):
+            c = self.make()
+            c.publication_epoch = epoch
+            with self.assertRaises(Stop) as error:
+                self.sync(c)
+            self.assertEqual(error.exception.code, 'invalid_publication_epoch')
+        self.assertEqual(self.posts, [])
+
+    def test_stale_runtime_epoch_cannot_replace_newer_local_receipt(self):
+        c = self.make()
+        c.publication_epoch = 4
+        self.sync(c)
+        before = len(self.posts)
+        stale = self.make()
+        with self.assertRaises(Stop) as error:
+            self.sync(stale)
+        self.assertEqual(error.exception.code, 'stale_publication_epoch')
+        ack = {'ok': True, 'revision': 1, 'session_id': c.c['session_id'],
+               'session_epoch': 3, 'request_sha256': 'b'*64, 'digest': 'a'*64}
+        with game_lock(stale.c['save_path']):
+            with self.assertRaises(Stop) as error:
+                stale.record_publication(stale.observation(), ack, request_sha256='b'*64, art_hashes={})
+        self.assertEqual(error.exception.code, 'stale_publication_epoch')
+        self.assertEqual(len(self.posts), before)
+        self.assertEqual(c.state()['session_epoch'], 4)
+
+    def test_renderer_cache_miss_is_bounded_and_inherits_game_lock(self):
+        import action_publish
+        import export_known_art
+        c = self.make()
+        with game_lock(c.c['save_path']) as fd:
+            with patch.object(export_known_art, 'cache_ready', return_value=False):
+                with patch.object(action_publish.subprocess, 'run') as run:
+                    action_publish.render_known(c.c, c.observation(), fd)
+        args, kwargs = run.call_args
+        self.assertIn('--no-preview', args[0])
+        self.assertEqual(kwargs['timeout'], 45)
+        self.assertEqual(kwargs['pass_fds'], (fd,))
+        self.assertTrue(kwargs['check'])
+
+    def test_renderer_timeout_after_commit_does_not_repeat_action(self):
+        c = self.make()
+        self.sync(c)
+        with patch.object(c, 'renderer', side_effect=subprocess.TimeoutExpired('synthetic-export', 45)):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                self.action(c)
+        self.assertEqual(len(self.calls), 1)
+        result = self.action(c)
+        self.assertTrue(result['ok'])
+        self.assertFalse(result['engine_executed'])
+        self.assertEqual(len(self.calls), 1)
 
 if __name__=='__main__':unittest.main()

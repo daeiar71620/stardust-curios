@@ -4,8 +4,10 @@ config.local.json
 outbox/
 *.action-publish.lock
 *.action-publish.binding.json
-config.*.json
+*.json
 !config.example.json
+*.current-shop.json
+*.switches/
 receipts/
 known-art/
 art/
@@ -18,3 +20,4 @@ runtime/
 .env
 .env.*
 credentials*.json
+.pytest_cache/
