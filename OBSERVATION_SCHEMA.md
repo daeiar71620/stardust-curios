@@ -1,4 +1,4 @@
-# Public observation schema, version 6
+# Public observation schema, version 6 (v7 catalog-privacy release)
 
 The spectator and AI player consume only the public observation or CLI output. They must never open the private save. All actions go through `engine.py` / `GameStore.execute`.
 
@@ -37,7 +37,7 @@ Old pending quotes are grandfathered even when their ask, category or condition 
 - `goal`: introductory legacy summary `{credits:650,collection:2}`
 - `inventory`, `collection`: public item arrays
 - `crates`: sealed `{id,supplier,name}` records only
-- Public item fields: `id,name,rarity,kind,color,condition,value_estimate:[low,high],repair_cost,price,origin,description,collected,sale_attempted_today,repair_attempted_today,repairs_remaining,negotiating`
+- Public item fields: `id,art_id,name,rarity,kind,color,condition,value_estimate:[low,high],repair_cost,price,origin,description,collected,sale_attempted_today,repair_attempted_today,repairs_remaining,negotiating`
 - `suppliers`: `[{id,name,cost,stock,description}]`; costs already reflect today's event
 - `upgrades`: `{workbench:0..3,shelf:0..3,display:0..3}`
 - `upgrade_costs`: matching keys with the next price or null
@@ -61,7 +61,16 @@ Old pending quotes are grandfathered even when their ask, category or condition 
 
 `visitors`: `[{id,name,role,preferred_kind,preference_label,min_condition,budget_range:[low,high],premium,status,attempted_today}]`. Status is `waiting`, `negotiating`, `bought`, or `left`. Exact budget is private. `premium` remains legacy metadata and is not a v5/v6 calculation input; it is distinct from a final-roll record's relative price `premium`.
 
-`codex`: `{total,discovered,collected,entries:[{name,rarity,kind,description,discovered,collected}]}`. All 24 catalog descriptions are public. Sealed cargo is never exposed.
+`codex`: `{total,discovered,collected,entries:[...]}`. In the v7 release, unseen identities are withheld by the engine itself. Every entry has a stable, non-semantic 1-based `slot`:
+
+- Undiscovered: exactly `{slot,discovered:false,collected:false}`. No name, semantic ID, art ID, rarity, kind, description, shape hint or item-specific requirement is emitted
+- Discovered: `{slot,art_id,name,rarity,kind,description,discovered:true,collected}`. `art_id` identifies the original illustration and is public only after discovery
+- Buying a sealed crate does not discover its cargo. Opening it records discovery before revealing the item and its event. Sold items stay discovered; collection status remains independent
+- Inventory, collection and public item events may contain `art_id`, because those items have already been opened. Old public files without this field remain viewable via exact public-name artwork matching
+- Collection-set descriptions disclose category/count/perk only; they do not list unknown members
+- The new viewer additionally redacts undiscovered entries from older v2–v6 projections that used to include every identity. Unknown illustrations are identical regardless of hidden kind, rarity or name
+
+Save/protocol `version` remains 6: this privacy tightening and additive `art_id`/`slot` metadata do not change save structure, random state, dice rules, economy or import behavior. `status` refreshes a stale public file without changing the private save. Sealed cargo remains private.
 
 `collection_sets`: `[{id,name,description,required:3,current,completed,perk}]`. `current` counts distinct collected types of that kind.
 

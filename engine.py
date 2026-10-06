@@ -344,9 +344,16 @@ def _public_visitors(state):
 
 def _public_codex(state):
     collected = {i["catalog_id"] for i in state["collection"]}
-    entries = [{"name": row[1], "rarity": row[2], "kind": row[3], "description": row[5],
-                "discovered": row[0] in state["discovered"], "collected": row[0] in collected} for row in CATALOG]
-    return {"total": len(CATALOG), "discovered": len(state["discovered"]), "collected": len(collected), "entries": entries}
+    # Opened inventory/collection are also evidence of discovery in older saves.
+    # Never consult sealed cargo: buying a committed box must reveal nothing.
+    discovered = set(state["discovered"]) | collected | {i["catalog_id"] for i in state["inventory"]}
+    entries = []
+    for slot, row in enumerate(CATALOG, 1):
+        entry = {"slot": slot, "discovered": row[0] in discovered, "collected": row[0] in collected}
+        if entry["discovered"]:
+            entry.update(art_id=row[0], name=row[1], rarity=row[2], kind=row[3], description=row[5])
+        entries.append(entry)
+    return {"total": len(CATALOG), "discovered": len(discovered), "collected": len(collected), "entries": entries}
 
 
 def _public_campaign(state):
@@ -377,7 +384,7 @@ def _public_item(state, item):
     # Deliberately whitelisted: no catalog base value, crate contents, or RNG.
     estimate = _reference_value(state, item)
     return {
-        "id": item["id"], "name": item["name"], "rarity": item["rarity"], "kind": item["kind"],
+        "id": item["id"], "art_id": item["catalog_id"], "name": item["name"], "rarity": item["rarity"], "kind": item["kind"],
         "color": COLORS[item["rarity"]], "condition": item["condition"],
         "value_estimate": [max(1, int(estimate * 0.82)), max(2, math.ceil(estimate * 1.20))],
         "public_reference": max(1, round(estimate)),

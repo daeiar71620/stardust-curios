@@ -1,4 +1,29 @@
-# v6 Verification Report
+# v7 Verification Report
+
+## Catalog and item-art release (2026-10-06)
+
+This release changes only the public catalog projection, illustration identity and viewer handling. Private save/protocol version remains 6, and economy/dice mechanics are unchanged. No private player save was read, copied, imported or advanced during development or QA.
+
+Previous v6 results below are retained as historical evidence; this release has its own verification results here.
+
+- Final aggregate: `python3 -m unittest discover -q` passed all **355 tests** in 48.614 seconds. `python3 -m py_compile *.py` passed. This includes all 331 existing regressions and 24 new catalog/privacy/art checks
+- The intentional invalid-snapshot-path test prints an argparse error before the successful aggregate summary; this is expected
+- Both standalone fixture generators validated all 13 dice and 16 management scenes and removed their temporary directories
+- Headless visual checks: the complete 24-item contact sheet and wide (1320×940) / phone (390×844) catalog layouts were inspected. Bee/cat anatomy is distinct; known names/stories and neutral unknown rows are legible. Temporary images were removed
+- Actual cloud-window spot-check passed at **1180×812** and **390×844**. Cat/bee portraits are distinct in catalog, stage and details; known stories and collection/discovery labels are correct. Unknown rows and detail modals show only the same question mark, `???` and generic locked copy. Switching tabs after a known detail and paging into unknown entries leaves no stale identity. Narrow paging and zero-discovery scenes also passed
+- All v7 test windows were closed; the pre-existing real observer was restored without game actions. All newly generated synthetic observations, launch wrappers and images were removed. No actual save values are included in this report. See [focused GUI QA](ui-qa/actual/CATALOG_V7_GUI_QA.md)
+
+### New coverage
+
+- Exact unknown-entry allowlist: only opaque numeric slot, discovered and collected flags. No semantic ID, name, rarity, category, story, art ID or shape hint
+- All 24 types: buying sealed cargo produces identical public output regardless of identity; opening reveals exactly the matching entry
+- Selling keeps discovery; collection is tracked separately; v1–v5 imports retain known/opened/sold items while sealed cargo remains secret
+- Current CLI, saved observations and read-command repair of stale public projections use the same disclosure boundary without changing private-save bytes or RNG
+- Viewer tabs, all catalog pages, card clicks, direct/stale detail overlays and legacy projections cannot expose unseen item identities
+- Each of 24 illustrations has a distinct rendered silhouette, including matching legacy public-name fallbacks; unknown art is pixel-identical across all identities/rarities
+- Synthetic observations and screenshots are temporary QA material and are removed after checking. Test/generator source remains reproducible
+
+## Historical v6 verification
 
 Verified 2026-10-06 using isolated synthetic games and public-only UI fixtures.
 No private player save was read, copied, migrated or advanced. The v5 source release remains separate. The original validation run did not push or deploy code.

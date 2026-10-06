@@ -1,6 +1,16 @@
-# 星屑杂货铺 v6 · 客流与选择
+# 星屑杂货铺 v7 · 每件旧物都有模样
 
-在保留双D10百分骰和01奇迹的基础上，这次只改两件事：**普通旅客限量且有预算；普通失败不再必送还价**。
+这次修正图鉴的发现边界，并为24件旧物分别绘制原创程序插画。迷路送信蜂有翅膀、触角和信封；发条守夜猫有猫耳、尾巴和发条。
+
+## 图鉴要亲手发现
+
+- 尚未开到的条目统一显示 **???** 和相同的未知标记，不预告名字、形状、类别、稀有度或故事
+- 只有真正开箱才解锁画像与档案。买到未拆封的箱子不会解锁；卖掉已见过的物品也不会忘记
+- “已发现”和“已珍藏”分别计数。收藏套装继续公开进度和经营收益，不列出未知物品的名字
+- CLI与公开observation也遵守同一边界。新版观战器会遮住旧版公开文件里尚未发现的条目
+- 本次是兼容更新，私档和经营规则仍为 **version 6**，无需导入或迁移v6存档。读取 `status` 只刷新公开投影，不推进天数、骰子或游戏资源
+
+v6的经营取舍保持不变：**普通旅客限量且有预算；普通失败不再必送还价**。
 
 ## 小店的新取舍
 
@@ -97,6 +107,6 @@ python3 simulate_management_v6.py --games 50 --days 40
 
 详见 [店主手册](PLAY_GUIDE.md)、[观察schema](OBSERVATION_SCHEMA.md)、[QA报告](QA_REPORT.md)、[经营试验](BALANCE_REPORT.md)。仿真只测公开策略的有限样本，不等于真人体验或全策略平衡证明。
 
-主要文件：`engine.py`、`spectator.py`、`_legacy_v1.py`至`_legacy_v5.py`、`test_management_v6.py`、`simulate_management_v6.py`。旧版本的专门测试针对冻结旧引擎，当前通用经营/持久化及v6契约测试针对v6。
+主要文件：`test_catalog_privacy_v7.py`、`test_catalog_spectator_v7.py`、`engine.py`、`spectator.py`、`_legacy_v1.py`至`_legacy_v5.py`、`test_management_v6.py`、`simulate_management_v6.py`。旧版本的专门测试针对冻结旧引擎，当前通用经营/持久化及v6契约测试针对v6。
 
 许可协议尚未选定，本目录未授予额外开源许可。

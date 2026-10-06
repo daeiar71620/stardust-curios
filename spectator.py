@@ -34,6 +34,20 @@ PERCENTILE_LABELS = {'miracle': ('01 · 大成功', GOLD), 'success': ('普通�
 KINDS = {'tool': '工具', 'artifact': '古物', 'bot': '机器人', 'plant': '植物', 'signal': '信号'}
 UPGRADES = {'workbench': '修理工作台', 'shelf': '陈列货架', 'display': '收藏展柜', 'showcase': '收藏展柜', 'lounge': '旅客休息角', 'sign': '星港招牌', 'scanner': '鉴定扫描仪'}
 
+# These are public illustration identities, not an engine/catalogue import.
+# Exact-name aliases keep older public observations visually compatible.
+ITEM_ART_NAMES = {
+    '折叠离子扳手': 'wrench', '重力手电': 'lamp', '轨道咖啡壶': 'coffee',
+    '哼歌清洁球': 'cleaner', '瓶装月光苔': 'moss', '二手星图仪': 'map',
+    '彗星玻璃八音盒': 'music', '逆相位焊笔': 'welder', '迷路送信蜂': 'bee',
+    '低语星籽': 'seed', '微型人造黎明': 'dawn', '最后一封地球来信': 'letter',
+    '逆风磁罗盘': 'compass', '口袋气象瓶': 'kettle', '慢半拍含羞草': 'sprout',
+    '快递蜗牛机': 'snail', '午睡时间匣': 'clock', '真空缝星针': 'needle',
+    '极光玻璃蕨': 'fern', '潮汐回声电台': 'radio', '发条守夜猫': 'cat',
+    '微型行星锻锤': 'hammer', '永昼盆栽': 'tree', '袖珍巡航鲸': 'whale',
+}
+ITEM_ART_IDS = frozenset(ITEM_ART_NAMES.values())
+
 
 def number(value: Any, default=0):
     """Do not let malformed or half-written public fields crash a live display."""
@@ -164,12 +178,25 @@ def public_sale_option(value):
 
 def public_sale_detail(item, walkins, page=0):
     source = as_dict(item)
-    fields = ('id', 'name', 'kind', 'rarity', 'color', 'condition', 'price',
+    fields = ('id', 'art_id', 'name', 'kind', 'rarity', 'color', 'condition', 'price',
               'description', 'negotiating', 'public_reference')
     result = {key: source.get(key) for key in fields}
     result.update(_view='sale', _sale_page=max(0, int(number(page))),
                   sale_options=[public_sale_option(v) for v in as_list(source.get('sale_options')) if as_dict(v)],
                   walkins=public_walkins(walkins))
+    return result
+
+
+def public_catalog_entry(value, slot=None):
+    """Fail closed even for older projections that included unopened identities."""
+    source = as_dict(value)
+    slot = public_integer(source.get('slot'), 1, 10**6) or slot
+    result = {'slot': slot, 'discovered': source.get('discovered') is True,
+              'collected': source.get('discovered') is True and source.get('collected') is True}
+    if result['discovered']:
+        for key in ('art_id', 'name', 'kind', 'rarity', 'description'):
+            if isinstance(source.get(key), str):
+                result[key] = source[key]
     return result
 
 
@@ -462,16 +489,36 @@ class Renderer:
                       (x,y+size),(x-size*.28,y+size*.28),(x-size,y),(x-size*.28,y-size*.28)],color)
 
     def item_art(self, x, y, size, item=None, crate=False):
+        """Draw a public identity, or a deliberately identical undiscovered mark.
+
+        Identity changes the silhouette, not just its paint. Unknown observations
+        return before looking at any identity, kind, rarity or color field.
+        """
         item = as_dict(item)
-        color = safe_color(item.get('color'), RARITIES.get(item.get('rarity'), ('',TEAL))[1])
-        kind = item.get('kind','artifact')
         s = size / 100
         def b(box): return tuple((x if i%2==0 else y)+v*s for i,v in enumerate(box))
         def r(box,c,rad=3,o=None): self.rect(b(box),c,max(1,int(rad*s)),o)
         def e(box,c,o=None): self.ellipse(b(box),c,o,max(1,int(2*s)))
         def l(pts,c,w=2): self.line([(x+a*s,y+bv*s) for a,bv in pts],c,max(1,int(w*s)))
         def p(pts,c,o=None): self.polygon([(x+a*s,y+bv*s) for a,bv in pts],c,o)
+        def a(box,start,end,c,w=2): self.draw.arc(b(box),start,end,fill=c,width=max(1,int(w*s)))
+        def star(xx,yy,sz,c=GOLD): self.star(x+xx*s,y+yy*s,sz*s,c)
         e((9,85,91,98),'#14212c')
+        if item.get('discovered') is False:
+            # No rarity-colored trim, shape family, or discoverable-name alias.
+            e((20,16,80,80),'#293c47','#667a82')
+            a((39,31,61,51),185,360,'#aebcc0',4)
+            l([(60,41),(58,49),(50,55),(50,61)],'#aebcc0',4)
+            e((47,67,53,73),'#aebcc0')
+            return
+        rarity = item.get('rarity')
+        color = safe_color(item.get('color'), RARITIES.get(rarity if isinstance(rarity,str) else '', ('',TEAL))[1])
+        kind = item.get('kind','artifact')
+        identity = item.get('art_id')
+        if not isinstance(identity,str) or identity not in ITEM_ART_IDS:
+            name = item.get('name')
+            identity = ITEM_ART_NAMES.get(name) if isinstance(name,str) else None
+        dark, metal, light = '#203942', '#789a9e', '#d7e9d9'
         if crate:
             p([(13,28),(48,10),(88,29),(51,49)],'#a17b5c')
             p([(13,28),(51,49),(51,91),(13,69)],'#755744')
@@ -480,6 +527,288 @@ class Renderer:
             l([(14,48),(51,70),(87,50)],'#b38a62',2)
             r((29,43,47,62),'#eed395',2)
             l([(36,48),(41,48),(38,54)],'#79573b',2)
+        elif identity == 'wrench':
+            # Hinged, partly folded ion wrench, with an unmistakable open jaw.
+            p([(43,43),(60,53),(43,87),(30,80)],metal)
+            p([(43,70),(60,61),(71,70),(44,91),(33,84)],color)
+            p([(36,13),(56,8),(49,27),(62,35),(77,20),(83,40),(65,55),(45,48),(30,29)],color)
+            p([(36,13),(38,31),(49,42),(45,48),(30,29)],'#608c90')
+            e((43,44,60,61),GOLD);e((48,49,55,56),dark)
+            l([(39,75),(46,64)],light,3);e((39,80,46,87),dark)
+            l([(60,20),(66,13),(71,16)],GOLD,2)
+        elif identity == 'lamp':
+            # A chunky flashlight angled upward, with a floating light beam.
+            p([(16,79),(31,91),(65,49),(49,35)],metal)
+            p([(20,77),(31,86),(60,49),(51,42)],color)
+            p([(46,35),(59,20),(82,38),(69,54)],GOLD)
+            p([(57,20),(68,17),(91,34),(81,40)],light)
+            p([(63,21),(70,22),(84,33),(79,34)],'#7ad2ca')
+            p([(73,16),(89,6),(96,19),(91,29)],'#365b61')
+            l([(28,74),(37,80)],dark,3);l([(35,65),(44,71)],dark,3)
+            e((45,50,52,57),GOLD)
+            star(24,29,5,light);star(86,65,4,color)
+        elif identity == 'coffee':
+            # An orbital moka pot: angular lower chamber, spout and open handle.
+            a((61,26,92,66),265,95,GOLD,7)
+            p([(22,44),(9,33),(7,40),(19,61),(28,62)],color)
+            p([(29,24),(64,24),(73,55),(65,79),(29,79),(21,55)],color)
+            p([(27,55),(69,55),(65,79),(29,79)],metal)
+            p([(32,25),(39,25),(35,51),(27,51)],light)
+            r((25,51,71,59),GOLD,2);r((27,79,68,85),dark,3)
+            e((26,19,67,29),GOLD);r((41,12,52,22),dark,3)
+            a((8,54,88,78),5,174,'#b9d9d0',2)
+            a((40,1,54,17),100,280,'#90aea7',2)
+        elif identity == 'cleaner':
+            # Spherical singer with a brush skirt and a clearly circular face.
+            for xx in (24,34,44,54,64,74): l([(xx,77),(xx-5,88)],metal,3)
+            e((15,26,84,86),color);e((20,31,79,73),'#527e81')
+            e((26,37,72,70),dark)
+            a((33,46,44,57),190,345,GOLD,2);a((54,46,65,57),190,345,GOLD,2)
+            a((43,52,55,63),0,180,light,2)
+            a((22,31,78,82),30,147,light,2)
+            r((39,20,60,28),GOLD,3)
+            l([(77,24),(77,9),(88,6),(88,19)],GOLD,3)
+            e((70,20,79,27),GOLD);e((81,15,90,22),GOLD)
+            star(15,18,4,light)
+        elif identity == 'moss':
+            # A sealed jar of moonlit moss, with the reflected crescent overhead.
+            r((25,28,77,87),'#487878',13,light)
+            r((35,15,67,33),'#67908e',4);r((32,12,69,24),'#ae8b65',3)
+            l([(40,15),(40,22),(60,22),(60,15)],'#d7b389',2)
+            e((31,65,71,85),'#355e59')
+            for xx,yy,rr in ((35,70,9),(48,63,10),(61,69,9),(51,76,8)):
+                e((xx-rr,yy-rr,xx+rr,yy+rr),color)
+            e((46,36,63,53),'#e8e7b3');e((51,32,67,48),'#487878')
+            l([(31,39),(31,58)],'#c1e5d9',3)
+            star(40,61,3,light);star(62,62,2,light)
+        elif identity == 'map':
+            # Tripod projector beneath a wide floating star-chart window.
+            l([(47,76),(27,93)],metal,4);l([(54,76),(74,93)],metal,4)
+            l([(50,78),(50,94)],GOLD,3)
+            p([(42,68),(21,51),(77,51),(58,68)],'#35585c')
+            r((31,67,69,80),metal,5);e((37,65,63,73),color)
+            p([(11,17),(79,9),(89,52),(21,60)],'#2e535c',color)
+            l([(17,29),(82,21)],'#487783',1);l([(21,47),(86,39)],'#487783',1)
+            l([(32,15),(41,57)],'#487783',1);l([(57,12),(66,54)],'#487783',1)
+            l([(28,40),(41,26),(59,35),(71,21)],light,2)
+            for xx,yy in ((28,40),(41,26),(59,35)): star(xx,yy,3,GOLD)
+            e((66,16,76,26),color);e((69,19,73,23),dark)
+            l([(74,42),(79,47)],RED,2);l([(79,42),(74,47)],RED,2)
+        elif identity == 'music':
+            # Glass bell, comet and brass winding crank over a wooden music box.
+            p([(27,64),(73,64),(81,81),(66,91),(23,83)],'#9e735d')
+            p([(23,72),(67,80),(81,71),(81,81),(66,91),(23,83)],'#755747')
+            l([(30,80),(59,86)],GOLD,2)
+            a((20,11,78,74),180,360,light,3)
+            l([(20,43),(20,67),(78,67),(78,43)],light,2)
+            e((20,61,78,73),metal);e((27,62,71,68),GOLD)
+            l([(30,53),(58,31),(66,37),(44,55)],color,4)
+            star(39,47,10,GOLD);star(63,26,3,light)
+            l([(30,35),(30,43)],'#9dc4c3',2)
+            l([(79,77),(90,77),(90,68)],GOLD,3);e((86,64,94,71),color)
+        elif identity == 'welder':
+            # Slim insulated soldering pen, cable loop and hot split-phase tip.
+            a((4,63,37,92),0,300,metal,4)
+            p([(22,77),(33,87),(66,43),(55,34)],color)
+            p([(25,75),(30,79),(59,40),(55,36)],light)
+            p([(54,33),(64,26),(73,34),(67,44)],GOLD)
+            p([(64,27),(77,17),(80,22),(72,35)],metal)
+            l([(77,18),(86,8)],GOLD,3)
+            l([(40,57),(49,64)],dark,3);l([(35,64),(44,71)],dark,3)
+            star(87,9,5,light);l([(78,6),(76,2)],color,2)
+            l([(89,19),(96,20)],color,2);l([(65,13),(66,7)],GOLD,2)
+        elif identity == 'bee':
+            # Mail bee: paired translucent wings, antennae, stripes and envelope.
+            e((11,21,48,52),'#add7d3',light);e((53,15,90,49),'#add7d3',light)
+            l([(20,29),(39,44)],'#699da3',2);l([(80,24),(61,41)],'#699da3',2)
+            l([(40,29),(32,12)],metal,3);l([(57,28),(66,9)],metal,3)
+            e((28,8,36,16),GOLD);e((63,5,71,13),GOLD)
+            e((25,36,77,83),GOLD)
+            r((28,50,74,58),dark,3);r((30,66,72,73),dark,3)
+            e((30,23,68,53),color);r((35,32,64,46),dark,6)
+            e((41,36,46,41),GOLD);e((54,36,59,41),GOLD)
+            l([(29,61),(19,67),(30,75)],metal,3);l([(73,60),(82,65),(72,74)],metal,3)
+            p([(48,81),(53,91),(58,81)],GOLD)
+            r((34,60,68,81),'#f0dfb4',2)
+            l([(35,62),(51,72),(67,62)],'#ad8664',2)
+            star(52,74,3,RED)
+        elif identity == 'seed':
+            # Suspended pointed seed with a curled shoot and whispering ripples.
+            p([(51,16),(68,37),(72,58),(61,80),(48,88),(30,73),(26,55),(36,31)],color)
+            p([(51,16),(46,48),(48,88),(30,73),(26,55),(36,31)],'#5b8a83')
+            l([(50,27),(45,48),(50,74)],light,2)
+            a((48,2,71,25),20,235,'#a8d19e',3)
+            e((66,5,77,13),'#c9dba4')
+            a((17,28,81,84),120,213,'#85b9b0',2)
+            a((9,22,89,90),131,200,'#527d81',2)
+            a((22,25,84,82),302,54,GOLD,2)
+            star(77,68,3,light)
+        elif identity == 'dawn':
+            # A lightbulb whose glass contains a literal rising sun and horizon.
+            e((19,8,81,69),'#6f6864',color)
+            p([(28,48),(72,48),(64,73),(36,73)],'#6f6864')
+            e((32,33,68,65),'#ffe0a0')
+            p([(27,54),(40,50),(51,54),(63,51),(72,55),(64,69),(36,69)],'#cf9271')
+            l([(29,57),(69,57)],GOLD,2)
+            for pts in ([(50,19),(50,26)],[(29,29),(35,34)],[(70,28),(65,34)]):l(pts,GOLD,2)
+            l([(29,24),(26,32),(26,40)],light,3)
+            r((36,70,65,85),metal,4);l([(38,74),(62,74)],dark,2);l([(38,80),(62,80)],dark,2)
+            r((43,85,58,91),GOLD,3)
+            star(10,49,4,color);star(88,21,4,color)
+        elif identity == 'letter':
+            # The last Earth letter: large envelope, wax seal and a blue stamp.
+            p([(13,29),(78,18),(90,72),(25,85)],'#decc9e')
+            p([(15,32),(54,56),(80,23)],'#f4e7c6')
+            l([(15,32),(54,56),(80,23)],'#ab8a69',2)
+            l([(24,79),(43,53)],'#b89975',2);l([(85,69),(65,49)],'#b89975',2)
+            e((48,50,63,65),'#b76d61');star(56,58,4,GOLD)
+            r((65,29,79,43),'#f0e8c9',1);e((67,31,77,41),'#628f9d')
+            p([(69,33),(73,32),(72,36),(75,38),(71,40),(70,36)],'#a4c4a4')
+            l([(28,62),(37,60)],'#a68568',2);l([(29,67),(43,65)],'#a68568',2)
+            a((4,8,41,44),208,287,color,2);a((10,14,35,38),208,287,color,2)
+            star(85,85,4,color)
+        elif identity == 'compass':
+            # Round pocket compass, suspension loop and a two-tone wind needle.
+            e((41,3,59,22),GOLD);e((46,7,54,16),dark)
+            e((14,18,86,90),GOLD);e((20,24,80,84),metal);e((25,29,75,79),dark)
+            for pts in ([(50,31),(50,38)],[(50,70),(50,77)],[(27,54),(34,54)],[(66,54),(73,54)]):l(pts,light,2)
+            p([(66,36),(55,59),(35,72),(44,50)],color)
+            p([(66,36),(55,59),(50,54)],'#eabb88')
+            p([(35,72),(44,50),(50,54)],'#598b90')
+            e((46,50,54,58),GOLD)
+            a((19,22,80,86),195,269,light,2)
+        elif identity == 'kettle':
+            # Wide weather flask with a narrow neck, cloud and sugary rainfall.
+            r((39,14,62,41),'#88b5b6',4)
+            e((18,30,83,89),'#6d9ca1',light)
+            r((37,10,65,21),'#ab8a66',3);l([(42,14),(59,14)],GOLD,2)
+            e((31,43,48,59),'#e6e6d6');e((42,36,62,59),'#e6e6d6');e((56,44,71,59),'#e6e6d6')
+            r((34,51,68,60),'#e6e6d6',4)
+            for xx,yy in ((39,69),(51,73),(64,67)):star(xx,yy,3,color)
+            a((24,39,76,82),80,150,'#b9d6cf',3)
+            l([(40,5),(40,1)],MUTED,2);l([(59,5),(62,2)],MUTED,2)
+        elif identity == 'sprout':
+            # A shy bent mimosa, paired tiny leaflets and a squat clay pot.
+            l([(49,69),(50,43),(43,26),(34,21)],'#9ab69a',3)
+            l([(50,51),(29,34)],'#9ab69a',2);l([(50,53),(72,41)],'#9ab69a',2)
+            for xx,yy in ((32,35),(39,41),(60,47),(68,43)):
+                e((xx-8,yy-7,xx+1,yy),color);e((xx,yy,xx+9,yy+6),'#94bc9b')
+            e((24,14,40,24),'#b7d1a6');e((40,23,55,32),color)
+            p([(29,67),(73,67),(67,90),(35,90)],'#af785f')
+            r((26,63,76,72),'#dcac82',3);l([(40,79),(58,79)],'#d9a179',2)
+            e((19,28,23,32),GOLD);e((76,34,80,38),GOLD)
+        elif identity == 'snail':
+            # Snail courier: spiral parcel-shell, eyestalks and a caterpillar tread.
+            r((12,70,83,86),metal,8);r((17,75,78,82),dark,4)
+            for xx in (23,35,47,59,71):e((xx-3,76,xx+3,82),GOLD)
+            r((17,59,77,75),color,7)
+            e((18,28,63,73),'#b1916c',GOLD)
+            a((25,34,58,66),5,300,'#ead09d',3)
+            a((33,40,52,59),185,359,'#755c50',3)
+            l([(50,49),(50,54),(41,54)],'#755c50',3)
+            e((64,41,88,72),color)
+            l([(72,46),(69,25)],metal,3);l([(82,46),(88,28)],metal,3)
+            e((65,20,73,28),GOLD);e((84,23,92,31),GOLD)
+            e((71,49,75,54),dark);e((80,49,84,54),dark)
+            r((27,18,56,33),'#c0a57b',2);l([(41,19),(41,31)],light,3)
+        elif identity == 'clock':
+            # A clock cabinet whose lower drawer stores a quiet crescent moon.
+            r((22,17,77,79),'#937864',7);r((27,22,72,66),color,5)
+            e((33,25,67,59),'#f0dfb3');e((37,29,63,55),'#d1ba8e')
+            l([(50,33),(50,43),(59,47)],dark,3);e((47,40,53,46),dark)
+            l([(48,29),(52,29)],dark,2);l([(48,55),(52,55)],dark,2)
+            p([(24,65),(71,65),(82,80),(31,80)],'#4d5554')
+            e((43,65,59,79),GOLD);e((49,62,62,75),'#4d5554')
+            r((30,78,84,88),'#b99270',3);r((49,80,64,85),GOLD,2)
+            r((28,89,38,94),dark,2);r((67,89,77,94),dark,2)
+            star(79,15,4,color)
+        elif identity == 'needle':
+            # Long needle and an open looping gold thread that sews two stars.
+            a((12,12,65,57),55,328,GOLD,3)
+            a((25,42,83,87),235,70,GOLD,3)
+            l([(24,44),(22,55),(32,65)],GOLD,3)
+            p([(69,14),(76,14),(79,22),(25,89),(60,24)],color)
+            p([(71,20),(74,20),(29,84)],light)
+            l([(67,23),(72,18)],dark,3)
+            l([(69,20),(57,12),(45,13)],GOLD,2)
+            star(35,70,9,'#d7cca7');star(75,76,7,color)
+            l([(36,67),(36,72)],'#8d765e',2);l([(72,75),(77,75)],dark,2)
+        elif identity == 'fern':
+            # Angular translucent fronds, visibly different from rounded plants.
+            l([(51,74),(52,16)],light,3)
+            for yy,spread in ((28,17),(40,26),(53,32),(65,26)):
+                p([(51,yy+8),(51-spread,yy-5),(53-spread,yy+7)],color)
+                p([(53,yy+8),(53+spread,yy-9),(53+spread,yy+3)],'#91d2c1')
+                l([(51,yy+7),(53-spread,yy+5)],'#d2e5dd',1)
+                l([(53,yy+6),(51+spread,yy-5)],'#d1bde9',1)
+            p([(52,7),(44,23),(53,29),(61,19)],'#c4d9ca')
+            p([(31,76),(70,76),(64,92),(38,92)],'#657b8c')
+            p([(31,76),(48,81),(38,92)],'#99b1af')
+            p([(48,81),(70,76),(64,92)],'#a09cb7')
+            star(83,23,3,light)
+        elif identity == 'radio':
+            # Rounded tabletop radio, big speaker, tuning strip and ocean dial.
+            l([(26,30),(14,8)],metal,3);e((11,5,17,11),GOLD)
+            r((12,29,87,85),'#9b7964',12);r((18,35,81,79),color,8)
+            e((24,44,56,74),dark)
+            for xx in (31,38,45):l([(xx,49),(xx,69)],metal,2)
+            r((60,43,75,50),dark,2);l([(65,43),(65,50)],GOLD,2)
+            e((61,58,76,73),GOLD);l([(64,66),(68,62),(72,66)],'#8b735a',2)
+            r((20,85,32,91),dark,2);r((66,85,78,91),dark,2)
+            a((41,6,77,34),203,337,color,2);a((48,13,70,32),203,337,GOLD,2)
+        elif identity == 'cat':
+            # Cat anatomy stays readable at thumbnail size: ears, tail and key.
+            a((66,43,96,84),275,110,color,7)
+            e((35,45,74,90),color)
+            p([(24,39),(25,13),(42,23),(56,22),(73,10),(76,43)],color)
+            p([(28,20),(30,35),(39,28)],'#d8aaad');p([(60,28),(70,17),(71,34)],'#d8aaad')
+            e((25,23,75,61),color)
+            p([(33,39),(45,39),(39,44)],GOLD);p([(55,39),(67,39),(61,44)],GOLD)
+            p([(47,46),(54,46),(50,50)],dark)
+            l([(50,50),(45,54)],dark,2);l([(50,50),(56,54)],dark,2)
+            l([(23,47),(35,49)],light,2);l([(65,49),(78,45)],light,2)
+            r((32,82,49,91),metal,5);r((56,82,73,91),metal,5)
+            l([(51,66),(51,80)],light,2)
+            l([(35,69),(21,69)],GOLD,4)
+            e((10,58,23,71),GOLD);e((10,69,23,82),GOLD)
+            e((14,62,19,67),dark);e((14,73,19,78),dark)
+            r((38,57,64,63),dark,3);e((47,60,55,68),GOLD)
+        elif identity == 'hammer':
+            # Heavy planet forge hammer; a ringed globe forms its striking head.
+            p([(48,38),(62,44),(43,92),(28,86)],metal)
+            p([(38,65),(50,70),(43,90),(30,85)],'#a2785c')
+            l([(37,73),(46,77)],GOLD,2);l([(34,81),(44,85)],GOLD,2)
+            p([(25,20),(34,12),(77,30),(81,41),(70,51),(27,33)],color)
+            p([(23,21),(31,15),(36,23),(29,39),(21,32)],metal)
+            e((49,14,82,48),GOLD);e((57,20,69,32),'#d5a568')
+            l([(43,45),(87,19)],'#f7e6b7',3)
+            a((15,6,92,57),310,138,'#bd9e72',2)
+            star(88,62,6,color);star(16,54,4,'#eea486');e((84,4,90,10),'#e3aa7e')
+        elif identity == 'tree':
+            # Golden daylight bonsai, spreading crown and a shallow oval planter.
+            l([(49,77),(49,50),(36,36)],'#b98c66',6)
+            l([(48,59),(66,41)],'#b98c66',5)
+            l([(43,49),(24,42)],'#b98c66',4)
+            for box,c in (((10,24,42,49),'#b5b778'),((26,9,61,37),color),((49,20,85,48),'#dec879'),((65,32,94,54),'#bdad69')):
+                e(box,c)
+            e((37,14,53,28),'#f4dfa4');star(67,27,5,'#fff0c3')
+            l([(16,14),(12,9)],color,2);l([(64,10),(67,4)],color,2)
+            e((20,74,80,92),'#a57b64');e((20,71,80,83),'#d8b486')
+            e((27,73,73,79),'#5d6960');l([(46,76),(56,76)],'#b98c66',4)
+        elif identity == 'whale':
+            # Long cruising whale with tail flukes, belly, fins and cabin lights.
+            p([(66,47),(86,27),(96,26),(91,42),(80,53),(93,63),(92,75),(79,70),(67,58)],color)
+            e((8,33,80,74),color)
+            p([(35,37),(45,23),(50,24),(55,37)],'#a8bcb3')
+            a((10,37,79,72),0,176,'#e1d8b6',8)
+            p([(42,60),(60,64),(51,81),(40,79)],metal)
+            e((19,47,26,54),dark);e((20,47,23,50),light)
+            a((11,48,32,63),45,140,dark,2)
+            for xx in (37,49,61):
+                e((xx-4,43,xx+4,51),GOLD);e((xx-2,45,xx+2,49),dark)
+            l([(29,35),(29,65)],'#ad976e',3)
+            l([(24,31),(21,22),(27,15)],metal,2)
+            e((17,12,24,19),color);e((30,7,36,13),GOLD)
         elif kind == 'plant':
             l([(51,78),(50,29)],'#89c79c',4)
             e((17,28,51,51),color); e((49,10,77,41),'#bedbb0')
@@ -998,7 +1327,7 @@ class Renderer:
         if not as_list(codex.get('entries')):
             return self.items(box,o,True)
         x,y,w,h=box
-        entries=[as_dict(e) for e in codex['entries']]
+        entries=[public_catalog_entry(e, slot) for slot,e in enumerate(codex['entries'], 1)]
         entries.sort(key=lambda e:(not bool(e.get('collected')),not bool(e.get('discovered'))))
         self.text((x+2,y+5),'旧物图鉴',22,INK,True)
         self.text((x+w-2,y+10),f"发现 {codex.get('discovered',0)}/{codex.get('total',len(entries))} · 珍藏 {codex.get('collected',0)}",17,MUTED,anchor='rt')
@@ -1007,13 +1336,11 @@ class Renderer:
             yy=y+45+i*89
             found=item.get('discovered');collected=item.get('collected')
             self.rect((x,yy,x+w,yy+80),PANEL,14)
-            art=dict(item)
-            if not found:art['color']='#68817d'
-            self.item_art(x+10,yy+9,61,art)
-            self.text((x+82,yy+11),item.get('name','未知旧物'),21,INK if found else MUTED,True,w-205)
+            self.item_art(x+10,yy+9,61,item)
+            self.text((x+82,yy+11),item.get('name','???'),21,INK if found else MUTED,True,w-205)
             self.text((x+w-16,yy+15),'已珍藏' if collected else '已发现' if found else '待寻访',17,GOLD if collected else TEAL if found else MUTED,anchor='rt')
-            self.text((x+82,yy+43),item.get('description',''),16,MUTED,False,w-101)
-            self.hits.append(((x,yy,x+w,yy+80),('inspect',item)))
+            self.text((x+82,yy+43),item.get('description','') if found else '尚未遇见 · 开箱后解锁',16,MUTED,False,w-101)
+            self.hits.append(((x,yy,x+w,yy+80),('inspect',dict(item,_view='codex'))))
         self.pagination((x,y+h-28,w,28),page,pages)
 
     def visitors(self, box, o):
@@ -1052,6 +1379,8 @@ class Renderer:
         self.pagination((x,y+h-28,w,28),page,pages)
 
     def detail_card(self, item):
+        if item.get('_view')=='codex' or item.get('discovered') is False:
+            item=public_catalog_entry(item)
         if item.get('_view')=='roll':return self.roll_detail(item)
         if item.get('_view')=='negotiation':return self.bargaining_detail(item)
         if item.get('_view')=='sale':return self.sale_detail(item)
@@ -1065,8 +1394,9 @@ class Renderer:
         self.text((x+28,y+24),'旧物档案',19,TEAL,True)
         self.text((x+w-28,y+24),'点击任意处返回 ×',17,MUTED,anchor='rt')
         self.item_art(x+w/2-64,y+71,128,item)
-        self.text((x+w/2,y+220),item.get('name','小店档案'),32,INK,True,w-50,1,anchor='mt')
-        self.text((x+31,y+284),item.get('description') or '这件旧物的故事，还在慢慢展开。',23,MUTED,False,w-62,5)
+        unknown=item.get('discovered') is False
+        self.text((x+w/2,y+220),'???' if unknown else item.get('name','小店档案'),32,INK,True,w-50,1,anchor='mt')
+        self.text((x+31,y+284),'尚未遇见。亲手开箱后，才会在这里留下画像和故事。' if unknown else item.get('description') or '这件旧物的故事，还在慢慢展开。',23,MUTED,False,w-62,5)
 
     def sale_detail(self, source):
         """Public pre-sale conditions only; clicking never attempts a sale."""
@@ -1326,7 +1656,12 @@ class Spectator:
         """A projection refresh must not leave a live quote looking current."""
         detail=as_dict(self.detail)
         pending=as_dict(as_dict(self.reader.observation).get('negotiation'))
-        if detail.get('_view')=='sale':
+        if detail.get('_view')=='codex':
+            entries=as_list(as_dict(as_dict(self.reader.observation).get('codex')).get('entries'))
+            entry=next((public_catalog_entry(v,slot) for slot,v in enumerate(entries,1)
+                        if (public_integer(as_dict(v).get('slot'),1,10**6) or slot)==detail.get('slot')),None)
+            self.detail=dict(entry,_view='codex') if entry else None
+        elif detail.get('_view')=='sale':
             observation=as_dict(self.reader.observation)
             item=next((v for v in as_list(observation.get('inventory'))
                        if as_dict(v) and v.get('id')==detail.get('id')),None)

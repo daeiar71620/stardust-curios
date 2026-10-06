@@ -63,7 +63,7 @@ class ExpansionTests(unittest.TestCase):
         self.store.execute("sell", item["id"])
         codex = self.store.execute("codex")
         self.assertEqual(codex["discovered"], 1)
-        self.assertFalse(next(e for e in codex["entries"] if e["name"] == item["name"])["collected"])
+        self.assertFalse(next(e for e in codex["entries"] if e.get("name") == item["name"])["collected"])
 
     def test_new_read_commands_do_not_change_private_rng_or_revision(self):
         private = self.path.read_bytes()

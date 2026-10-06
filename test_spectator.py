@@ -43,7 +43,7 @@ class RendererTests(unittest.TestCase):
                     self.assertIn('第 8 天',self.renderer.words)
                     self.assertNotIn('第 8 / 7 天',self.renderer.words)
     def test_new_schema_fields_are_rendered(self):
-        for tab,expected in [('visitors','米拉'),('collection','袖珍巡航鲸'),('upgrades','工作台'),('journal','小店又迎来一个崭新的早晨。')]:
+        for tab,expected in [('visitors','米拉'),('collection','???'),('upgrades','工作台'),('journal','小店又迎来一个崭新的早晨。')]:
             self.renderer.render(self.obs,(1320,940),tab)
             self.assertIn(expected,self.renderer.words)
         self.assertIn('街区熟面孔',self.renderer.words)
