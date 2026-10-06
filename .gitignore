@@ -15,3 +15,7 @@ __pycache__/
 /backups/
 /saves/
 /screenshots/
+# All root JSON files are local game saves / observations in this project.
+/*.json
+/ui-qa/
+/ui-*-preview.png

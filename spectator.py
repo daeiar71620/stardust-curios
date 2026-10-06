@@ -1,276 +1,853 @@
 #!/usr/bin/env python3
-"""Native read-only spectator. It never imports the game engine or reads its save."""
+"""Stardust Curios: a native, strictly read-only public-observation viewer.
+
+Tk is only a window around a Pillow renderer. --snapshot renders the exact same
+UI without connecting to a desktop, so visual QA never disturbs a running game.
+This module does not import the engine, advance time, or write game state.
+"""
+from __future__ import annotations
+
 import argparse
+from functools import lru_cache
 import json
 import math
 from pathlib import Path
 import time
-import tkinter as tk
-from PIL import Image, ImageDraw, ImageFont, ImageTk
+from typing import Any
 
-BG = '#080f24'
-PANEL = '#111f3b'
-INK = '#eaf4ff'
-MUTED = '#8daccb'
-CYAN = '#68e6ec'
-GOLD = '#ffcd68'
-RARITIES = {'common': ('普通', '#8fbed6'), 'rare': ('稀有', '#ad9cff'), 'legendary': ('传奇', '#ffd06d')}
-KINDS = {'tool':'工具', 'artifact':'古物', 'bot':'机器人', 'plant':'植物', 'signal':'信号'}
+from PIL import Image, ImageColor, ImageDraw, ImageFont
+
+BG = '#101c29'
+PANEL = '#1b2b37'
+PANEL2 = '#233743'
+INK = '#f6edda'
+MUTED = '#aec1bb'
+TEAL = '#80d8c5'
+GOLD = '#f4c77d'
+LILAC = '#c1b0ef'
+RED = '#eab099'
+LINE = '#3c535b'
+TABS = [('shelf', '店内货架'), ('visitors', '来店旅客'), ('collection', '收藏图鉴'), ('upgrades', '小店成长'), ('journal', '经营日志')]
+RARITIES = {'common': ('普通', '#9bcbbd'), 'rare': ('稀有', LILAC), 'legendary': ('传说', GOLD)}
+ROLL_LABELS = {'miracle': ('天然20 · 大成功', GOLD), 'success': ('普通成功', TEAL), 'failure': ('失败', RED), 'fumble': ('天然1 · 大失败', RED)}
+KINDS = {'tool': '工具', 'artifact': '古物', 'bot': '机器人', 'plant': '植物', 'signal': '信号'}
+UPGRADES = {'workbench': '修理工作台', 'shelf': '陈列货架', 'display': '收藏展柜', 'showcase': '收藏展柜', 'lounge': '旅客休息角', 'sign': '星港招牌', 'scanner': '鉴定扫描仪'}
+
+
+def number(value: Any, default=0):
+    """Do not let malformed or half-written public fields crash a live display."""
+    try:
+        result = float(value)
+        return result if math.isfinite(result) else default
+    except (TypeError, ValueError):
+        return default
+
+
+def as_dict(value):
+    return value if isinstance(value, dict) else {}
+
+
+def as_list(value):
+    return value if isinstance(value, list) else []
+
+
+def safe_color(value, fallback=TEAL):
+    try:
+        if not isinstance(value, str) or not value.startswith('#'):
+            return fallback
+        ImageColor.getrgb(value)
+        return value
+    except (ValueError, TypeError):
+        return fallback
+
+
+def public_roll(value):
+    """An explicit public-field projection, never a derivation or a random roll."""
+    source = as_dict(value)
+    if not source:
+        return {}
+    fields = ('id', 'day', 'item_id', 'item_name', 'customer_id', 'customer_name',
+              'stage', 'face', 'modifier', 'modifiers', 'total', 'target',
+              'success', 'outcome', 'price', 'explanation')
+    roll = {key: source.get(key) for key in fields}
+    face = number(source.get('face'), -1)
+    roll['face'] = int(face) if not isinstance(source.get('face'), bool) and face == int(face) and 1 <= face <= 20 else None
+    return roll
+
+
+def roll_status(roll, negotiation=None):
+    roll = as_dict(roll)
+    pending = as_dict(negotiation)
+    if pending and pending.get('item_id') == roll.get('item_id') and roll.get('stage') == 'initial' and roll.get('outcome') == 'failure':
+        return '还价中', LILAC
+    return ROLL_LABELS.get(roll.get('outcome'), ('等待公开判定', MUTED))
+
+
+def roll_math(roll):
+    """Read public adjudication fields verbatim; never estimate hidden economics."""
+    face = roll.get('face')
+    if face is None:
+        return '尚无有效公开骰点'
+    if any(roll.get(key) is None or number(roll.get(key), None) is None for key in ('modifier','total','target')):
+        return f'D20 {face} · 等待完整公开判定'
+    modifier = number(roll.get('modifier'))
+    total = number(roll.get('total'))
+    target = number(roll.get('target'))
+    sign = '+' if modifier >= 0 else '−'
+    return f'D20 {face} {sign} {abs(modifier):g} = {total:g}  /  目标 {target:g}'
+
+
+@lru_cache(maxsize=160)
+def font(size, bold=False):
+    name = 'NotoSansCJK-Bold.ttc' if bold else 'NotoSansCJK-Regular.ttc'
+    path = Path('/usr/share/fonts/opentype/noto') / name
+    if path.exists():
+        return ImageFont.truetype(str(path), max(10, int(size)), index=2)
+    return ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', max(10, int(size)))
+
+
+class ObservationReader:
+    """Poll only the caller-provided observation; never discover another file."""
+    def __init__(self, path):
+        self.path = Path(path)
+        if self.path.name.lower() in {'save.json', 'state.json'} or self.path.resolve().name.lower() in {'save.json', 'state.json'}:
+            raise ValueError('观战窗口只能读取公开 observation 文件，不能读取存档')
+        self.observation = None
+        self.stamp = None
+        self.error = None
+        self.updated_at = None
+
+    def poll(self):
+        try:
+            stat = self.path.stat()
+            if stat.st_size > 4 * 1024 * 1024:
+                raise ValueError('公开状态文件过大')
+            stamp = (stat.st_mtime_ns, stat.st_size)
+            if stamp == self.stamp:
+                self.error = None
+                return False
+            data = json.loads(self.path.read_text(encoding='utf-8'))
+            if not isinstance(data, dict) or 'credits' not in data or not isinstance(data.get('inventory', []), list):
+                raise ValueError('等待有效的公开状态')
+            # Old and new engines deliberately exclude these from public output.
+            if any(k in data for k in ('rng_state', 'rng', 'hidden_items', '_rng', 'random_state')):
+                raise ValueError('文件含非公开状态，已拒绝读取')
+            self.observation = data
+            self.stamp = stamp
+            self.error = None
+            self.updated_at = time.monotonic()
+            return True
+        except (OSError, ValueError, UnicodeError):
+            self.error = '等待公开状态更新' if self.observation else '等待店长开门'
+            return False
+
+
+class Renderer:
+    """Headless, deterministic render surface; optional time only animates artwork."""
+    def __init__(self):
+        self.image = None
+        self.draw = None
+        self.words = []
+        self.hits = []
+        self.tab = 'shelf'
+        self.page = 0
+
+    def rect(self, box, fill=PANEL, radius=18, outline=None, width=1):
+        self.draw.rounded_rectangle(tuple(round(v) for v in box), radius=radius, fill=fill, outline=outline, width=width)
+
+    def line(self, points, fill=LINE, width=2):
+        self.draw.line(points, fill=fill, width=width, joint='curve')
+
+    def ellipse(self, box, fill, outline=None, width=1):
+        self.draw.ellipse(box, fill=fill, outline=outline, width=width)
+
+    def polygon(self, points, fill, outline=None):
+        self.draw.polygon(points, fill=fill, outline=outline)
+
+    def text(self, xy, text, size=24, color=INK, bold=False, max_width=None, lines=1, anchor='lt', spacing=1.3):
+        value = str(text)
+        f = font(size, bold)
+        paragraphs = value.split('\n')
+        wrapped = []
+        for paragraph in paragraphs:
+            current = ''
+            for char in paragraph:
+                if max_width and f.getlength(current + char) > max_width and current:
+                    wrapped.append(current)
+                    current = char
+                else:
+                    current += char
+            wrapped.append(current)
+        truncated = len(wrapped) > lines
+        wrapped = wrapped[:lines]
+        if truncated and wrapped:
+            while max_width and f.getlength(wrapped[-1] + '…') > max_width and wrapped[-1]:
+                wrapped[-1] = wrapped[-1][:-1]
+            wrapped[-1] += '…'
+        self.words.append(value)
+        for i, row in enumerate(wrapped):
+            self.draw.text((xy[0], xy[1] + i * size * spacing), row, font=f, fill=color, anchor=anchor)
+        return len(wrapped) * size * spacing
+
+    def pill(self, xy, label, color=TEAL, size=18, fill='#203f40', padding=13):
+        w = math.ceil(font(size, True).getlength(str(label))) + padding * 2
+        self.rect((xy[0], xy[1], xy[0]+w, xy[1]+size+19), fill, 10)
+        self.text((xy[0]+padding, xy[1]+8), label, size, color, True)
+        return w
+
+    def progress(self, x, y, w, fraction, color=TEAL, h=7):
+        self.rect((x,y,x+w,y+h), '#334a50', h//2)
+        fraction = max(0, min(1, number(fraction)))
+        if fraction:
+            self.rect((x,y,x+max(h,w*fraction),y+h), color, h//2)
+
+    def star(self, x, y, size, color=GOLD):
+        self.polygon([(x,y-size),(x+size*.28,y-size*.28),(x+size,y),(x+size*.28,y+size*.28),
+                      (x,y+size),(x-size*.28,y+size*.28),(x-size,y),(x-size*.28,y-size*.28)],color)
+
+    def item_art(self, x, y, size, item=None, crate=False):
+        item = as_dict(item)
+        color = safe_color(item.get('color'), RARITIES.get(item.get('rarity'), ('',TEAL))[1])
+        kind = item.get('kind','artifact')
+        s = size / 100
+        def b(box): return tuple((x if i%2==0 else y)+v*s for i,v in enumerate(box))
+        def r(box,c,rad=3,o=None): self.rect(b(box),c,max(1,int(rad*s)),o)
+        def e(box,c,o=None): self.ellipse(b(box),c,o,max(1,int(2*s)))
+        def l(pts,c,w=2): self.line([(x+a*s,y+bv*s) for a,bv in pts],c,max(1,int(w*s)))
+        def p(pts,c,o=None): self.polygon([(x+a*s,y+bv*s) for a,bv in pts],c,o)
+        e((9,85,91,98),'#14212c')
+        if crate:
+            p([(13,28),(48,10),(88,29),(51,49)],'#a17b5c')
+            p([(13,28),(51,49),(51,91),(13,69)],'#755744')
+            p([(51,49),(88,29),(88,70),(51,91)],'#5a4339')
+            l([(32,19),(70,38),(70,80)],GOLD,6)
+            l([(14,48),(51,70),(87,50)],'#b38a62',2)
+            r((29,43,47,62),'#eed395',2)
+            l([(36,48),(41,48),(38,54)],'#79573b',2)
+        elif kind == 'plant':
+            l([(51,78),(50,29)],'#89c79c',4)
+            e((17,28,51,51),color); e((49,10,77,41),'#bedbb0')
+            e((50,45,85,65),color)
+            p([(27,63),(78,63),(69,91),(35,91)],'#b77e62')
+            r((24,61,80,70),'#e3b88e',3)
+            e((31,33,40,38),'#e7f5c4')
+        elif kind == 'bot':
+            l([(50,23),(50,8)],GOLD,3);e((44,3,56,15),GOLD)
+            r((20,24,81,65),color,13)
+            r((27,33,75,54),'#193940',8)
+            e((34,40,43,46),GOLD);e((59,40,68,46),GOLD)
+            l([(16,37),(6,54),(17,64)],'#82aaa6',5)
+            l([(85,37),(94,54),(84,64)],'#82aaa6',5)
+            r((29,68,72,85),'#abc0b0',5)
+            e((30,82,46,95),'#789391');e((59,82,75,95),'#789391')
+            r((41,72,61,77),GOLD,2)
+        elif kind == 'tool':
+            p([(43,38),(60,47),(41,93),(25,85)],'#799aa5')
+            p([(37,11),(57,7),(48,27),(61,36),(78,20),(84,42),(66,55),(43,47),(30,29)],color)
+            l([(37,75),(49,53)],'#cce2cc',3)
+            e((30,80,39,89),'#1d3941')
+        elif kind == 'signal':
+            r((15,35,84,86),color,11)
+            r((23,45,65,72),'#173641',4)
+            l([(27,59),(34,59),(39,51),(47,66),(54,57),(61,57)],'#a8e3c0',2)
+            e((69,49,78,58),GOLD);e((69,66,78,75),GOLD)
+            l([(68,33),(83,8)],'#c8cfab',3)
+            self.draw.arc(b((18,3,61,43)),205,330,fill=color,width=max(1,int(2*s)))
+            self.draw.arc(b((25,10,54,37)),205,330,fill=GOLD,width=max(1,int(2*s)))
+        else:
+            e((15,22,85,88),'#30444c',color)
+            p([(50,6),(79,45),(50,87),(22,45)],color)
+            p([(50,6),(50,87),(22,45)],'#687c93')
+            p([(50,6),(79,45),(50,46)],'#dfdfc4')
+            l([(23,45),(77,45)],'#eff6dd',2)
+            self.star(x+50*s,y+45*s,9*s,'#f9e6bb')
+
+    def shop_scene(self, box, o, frame=0):
+        """Original procedural illustration. Items on the counter are public items."""
+        x,y,w,h = box
+        # Paint into a consistent 680 x 320 illustration, then composite to fit.
+        old_image, old_draw = self.image, self.draw
+        self.image=Image.new('RGB',(680,320),'#233643');self.draw=ImageDraw.Draw(self.image)
+        self.rect((0,0,680,320),'#233643',0)
+        # Port window, distant ringed planet and pinprick stars.
+        self.rect((209,18,537,215),'#4c6668',72)
+        self.rect((218,26,528,207),'#142838',68)
+        for i in range(34):
+            xx=236+i*73%270; yy=38+i*41%150
+            self.ellipse((xx,yy,xx+(i%3==0)+1,yy+(i%3==0)+1),'#809d9d')
+        self.ellipse((376,45,452,121),'#71818b')
+        self.ellipse((379,46,433,101),'#a3a79b')
+        self.line([(356,106),(472,60)],'#b0b3a2',3)
+        self.line([(362,111),(476,65)],'#576e79',2)
+        self.line([(372,27),(372,207)],'#405c60',4)
+        self.line([(218,139),(528,139)],'#405c60',4)
+        # Wood-panelled side wall and hanging brass lamp.
+        for xx in range(17,204,32): self.line([(xx,0),(xx,219)],'#2e4750',2)
+        self.line([(160,0),(160,39)],'#a78b61',3)
+        self.polygon([(141,39),(179,39),(195,68),(125,68)],'#c09b63')
+        self.ellipse((127,62,192,76),'#edd195')
+        self.polygon([(130,73),(190,73),(227,218),(90,218)],'#34474a')
+        # Shelf with decorative bottles and a real public item when available.
+        self.rect((34,91,176,97),'#987453',2)
+        self.rect((34,166,176,174),'#987453',2)
+        self.rect((44,57,65,90),'#7ca8a3',5);self.rect((49,51,61,60),'#dcc493',2)
+        self.rect((77,65,97,90),'#b18f7b',4);self.rect((116,47,128,91),'#bea57e',2)
+        self.rect((133,55,150,91),'#839c88',2)
+        self.item_art(60,101,69,{'kind':'plant','color':'#8da883'})
+        # Handpainted shop plaque, chalkboard, pennant garland.
+        self.rect((563,43,653,130),'#b58e63',8)
+        self.rect((568,48,648,125),'#203e41',5)
+        self.text((608,60),'OPEN',16,GOLD,True,anchor='mt')
+        self.text((608,84),'星屑旧物',14,INK,True,anchor='mt')
+        self.text((608,104),'欢迎停靠',10,MUTED,anchor='mt')
+        self.line([(7,7),(91,23),(236,8)],'#c2a371',2)
+        for xx,yy,c in [(24,12,'#b68168'),(58,19,'#98ad9c'),(96,22,'#d3b777'),(134,18,'#7ea7a3'),(171,13,'#b68168')]:
+            self.polygon([(xx,yy),(xx+18,yy+1),(xx+10,yy+23)],c)
+        # Counter and rug.
+        self.rect((0,271,680,320),'#14252e',0)
+        self.polygon([(55,293),(605,293),(646,319),(19,319)],'#526565')
+        self.line([(56,307),(617,307)],'#89978b',2)
+        self.rect((55,218,625,279),'#846a50',7)
+        self.rect((55,220,625,233),'#c6a579',4)
+        self.rect((71,237,609,272),'#4c5550',3)
+        for xx in [206,387]:self.line([(xx,238),(xx,269)],'#a48864',2)
+        self.rect((268,242,410,267),'#243c43',4)
+        self.text((339,249),'每件旧物，都有新故事',11,GOLD,anchor='mt')
+        # Friendly assistant robot and small till; no fabricated game characters.
+        self.item_art(540,147,85,{'kind':'bot','color':'#92b6a5'})
+        self.rect((466,189,513,220),'#788e87',6)
+        self.rect((473,195,506,209),'#29474b',2)
+        self.line([(479,201),(499,201)],GOLD,2)
+        event=as_dict(o.get('last_event'))
+        item=event.get('item')
+        inventory=as_list(o.get('inventory'))
+        collection=as_list(o.get('collection'))
+        item = as_dict(item) or (as_dict(inventory[-1]) if inventory else {}) or (as_dict(collection[-1]) if collection else {})
+        self.ellipse((273,207,392,224),'#50645f')
+        self.item_art(284,103+math.sin(frame*.8)*2,112,item,crate=not bool(item))
+        self.star(277,143,7,GOLD);self.star(407,124,5,TEAL)
+        self.star(391,184,4,GOLD)
+        scene=self.image.resize((round(w),round(h)),Image.Resampling.LANCZOS)
+        self.image,self.draw=old_image,old_draw
+        mask=Image.new('L',scene.size,0)
+        ImageDraw.Draw(mask).rounded_rectangle((0,0,w-1,h-1),radius=18,fill=255)
+        self.image.paste(scene,(round(x),round(y)),mask)
+
+    def header(self, o, wide):
+        right=self.W-32
+        self.text((32,25),'演示数据 · 不是真实游玩' if self.demo else ('STARDUST CURIOS' if self.W<600 else 'STARDUST CURIOS  /  星港第 07 号泊位'),15,GOLD if self.demo else MUTED,True)
+        self.text((30,54),'星屑杂货铺',40 if self.W<600 else 46,INK,True)
+        self.pill((right-121 if self.W<600 else right-144,25 if self.W<600 else 30),'只读观战',TEAL,16 if self.W<600 else 19)
+        self.text((right,86),f"第 {int(number(o.get('day'),1))} 天",27,GOLD,True,anchor='rt')
+        if wide:self.text((360,78),'旧物生意 · 新的故事',21,MUTED)
+
+    def metrics(self, box, o):
+        x,y,w,h=box
+        self.rect((x,y,x+w,y+h),PANEL,18)
+        specs=[('可用星币',f"{int(number(o.get('credits'))):,}",GOLD),
+               ('今日体力',f"{int(number(o.get('energy')))}/{int(number(o.get('max_energy')))}",TEAL),
+               ('小店声望',f"{int(number(o.get('reputation')))}",LILAC)]
+        for i,(label,value,color) in enumerate(specs):
+            xx=x+22+i*w/3
+            if i:self.line([(xx-15,y+19),(xx-15,y+h-19)],LINE,1)
+            self.text((xx,y+16),label,18,MUTED)
+            self.text((xx,y+43),value,34,color,True)
+
+    def stage_model(self, o):
+        campaign=as_dict(o.get('campaign'))
+        stage=as_dict(campaign.get('next_milestone'))
+        if stage:
+            goals=[as_dict(g) for g in as_list(stage.get('goals'))]
+            return {'title':stage.get('title','下一段旅程'),'goals':goals,'campaign':campaign}
+        old=as_dict(o.get('goal'))
+        goals=[{'label':'星币','current':number(o.get('credits')),'target':number(old.get('credits'),650)},
+               {'label':'珍藏','current':len(as_list(o.get('collection'))),'target':number(old.get('collection'),2)}]
+        return {'title':'继续收藏，继续经营' if number(o.get('day'))>7 else '让小店在星港站稳脚跟','goals':goals,'campaign':campaign}
+
+    def goal_card(self, box, o):
+        x,y,w,h=box
+        self.rect((x,y,x+w,y+h),'#233c3e',17, '#466057')
+        g=self.stage_model(o)
+        summary=o.get('phase')=='week_summary'
+        self.text((x+18,y+13),'首周结算' if summary else '下一站',16,TEAL,True)
+        self.text((x+w-18,y+13),'可以继续经营' if summary else '长期经营',15,GOLD if summary else MUTED,anchor='rt')
+        self.text((x+18,y+41),g['title'],24,INK,True,w-36)
+        goals=g['goals']
+        # The public campaign owns all milestone calculations, including reputation.
+        pieces=[f"{v.get('label','目标')} {int(number(v.get('current'))):,}/{int(number(v.get('target'))):,}" for v in goals]
+        if len(pieces)>2:
+            for i,piece in enumerate(pieces[:4]):
+                self.text((x+18+(i%2)*(w-36)/2,y+74+(i//2)*22),piece,16,GOLD,False,(w-42)/2)
+        else:self.text((x+18,y+79),'  ·  '.join(pieces),18,GOLD,False,w-36)
+        fractions=[number(v.get('current'))/max(1,number(v.get('target'),1)) for v in goals]
+        self.progress(x+18,y+h-(12 if len(pieces)>2 else 20),w-36,min(fractions) if fractions else 1,TEAL,h=5)
+
+    def event_card(self, box, o):
+        x,y,w,h=box
+        self.rect((x,y,x+w,y+h),PANEL,18)
+        event=as_dict(o.get('last_event'))
+        self.pill((x+18,y+16),'店里刚刚发生',GOLD,16,'#463d2d')
+        self.text((x+w-18,y+22),f"DAY {int(number(o.get('day'),1)):02}",15,MUTED,anchor='rt')
+        title_y=58 if h<170 else 61
+        body_y=96 if h<170 else 104
+        body_size=18 if h<170 else 20
+        previous_roll=public_roll(o.get('last_roll'))
+        body_height=h-(34 if previous_roll else 0)
+        self.text((x+18,y+title_y),event.get('title') or '新的旅程开门了',26,INK,True,w-36)
+        self.text((x+18,y+body_y),event.get('text') or '一盏暖灯，一只货箱。等待店长的第一笔生意。',body_size,MUTED,False,w-36,max(1,1+int((body_height-body_y-10-body_size)/(body_size*1.3))))
+
+        self.hits.append(((x,y,x+w,y+h),('inspect',dict(name=event.get('title','店里刚刚发生'),description=event.get('text','')))))
+        if previous_roll:
+            label,color=roll_status(previous_roll)
+            if previous_roll.get('stage')=='initial' and previous_roll.get('outcome')=='failure':label='初次报价未达标'
+            self.text((x+18,y+h-28),f'上次 D20 {previous_roll.get("face") or "?"} · {label} · 查看记录 ›',15,color,False,w-36)
+            self.hits.append(((x,y+h-40,x+w,y+h),('show_rolls',None)))
+
+    def dice_art(self, x, y, size, face, color=GOLD):
+        """A settled D20 face. No fake spinning numbers or new RNG is used."""
+        cx=x+size/2;cy=y+size/2
+        points=[(cx,y),(x+size*.94,y+size*.25),(x+size*.9,y+size*.75),
+                (cx,y+size),(x+size*.1,y+size*.75),(x+size*.06,y+size*.25)]
+        self.polygon(points,'#172e3b',color)
+        self.line(points+[points[0]],color,3)
+        for a,b in [(points[0],(x+size*.22,y+size*.68)),(points[0],(x+size*.78,y+size*.68)),
+                    ((x+size*.22,y+size*.68),(x+size*.78,y+size*.68)),
+                    (points[1],(x+size*.78,y+size*.68)),(points[5],(x+size*.22,y+size*.68)),
+                    (points[3],(x+size*.22,y+size*.68)),(points[3],(x+size*.78,y+size*.68))]:
+            self.line([a,b],'#59766e',1)
+        self.text((cx,cy-size*.22),str(face) if face is not None else '?',size*.42,color,True,anchor='mt')
+        self.text((cx,y+size*.76),'D20',max(11,size*.105),MUTED,True,anchor='mt')
+
+    def dice_card(self, box, o):
+        x,y,w,h=box
+        roll=public_roll(o.get('last_roll') or as_dict(o.get('last_event')).get('roll'))
+        pending=as_dict(o.get('negotiation'))
+        if roll and (pending.get('item_id')!=roll.get('item_id') or roll.get('stage')!='initial' or roll.get('outcome')!='failure'):pending={}
+        label,color=roll_status(roll,pending)
+        self.rect((x,y,x+w,y+h),'#20353e',18,color,1)
+        self.pill((x+16,y+12),'D20 · 演示判定' if self.demo else 'D20 · 最新判定',color,15,'#30444b',10)
+        self.text((x+w-16,y+20),'查看骰子记录 ›',14,MUTED,anchor='rt')
+        self.dice_art(x+15,y+54,114,roll.get('face'),color)
+        tx=x+147;tw=w-163
+        self.text((tx,y+55),label,28,color,True,tw)
+        who=' · '.join(str(v) for v in (roll.get('customer_name'),roll.get('item_name')) if v)
+        self.text((tx,y+99),who or '等待下一笔生意的公开判定',16,INK,False,tw)
+        if pending:
+            ask=int(number(pending.get('original_price')));offer=int(number(pending.get('counter_offer')))
+            self.text((tx,y+130),f'标价 {ask:,} → 还价 {offer:,}',21,GOLD,True,tw)
+            self.text((tx,y+166),'待店主决定 · 只剩一次议价',17,LILAC,True,tw)
+        else:
+            price=int(number(roll.get('price')))
+            sold=roll.get('outcome') in ('miracle','success')
+            self.text((tx,y+130),f'{"成交" if sold else "公开报价"} {price:,} 星币',23,GOLD if sold else INK,True,tw)
+            message='再高的报价，也有奇迹时刻' if roll.get('outcome')=='miracle' else '旅客带着新故事离开' if sold else '本次交易未成'
+            self.text((tx,y+166),message,17,MUTED,False,tw)
+        if pending:
+            self.text((x+18,y+h-27),f'合计 {number(roll.get("total")):g} / 目标 {number(roll.get("target")):g}',13,MUTED,False,125)
+            self.text((tx,y+h-27),'接受/谢绝免费 · 再报价1体力',14,MUTED,False,tw)
+        else:self.text((x+18,y+h-27),roll_math(roll),15,MUTED,False,w-36)
+        public_pending={key:pending.get(key) for key in ('item_id','original_price','counter_offer','remaining_offers','final_offer_energy')} if pending else {}
+        self.hits.append(((x,y,x+w,y+h),('inspect',dict(roll,_view='roll',negotiation=public_pending))))
+        self.hits.append(((x+w-153,y+5,x+w,y+47),('show_rolls',None)))
+
+    def current_event(self, box, o):
+        event=as_dict(o.get('last_event'))
+        # Accept/decline, a new day and later shop actions do not roll again.
+        # Keep the actual latest event visible rather than treating the old face
+        # as a new result or calling an accepted counter-offer a failed sale.
+        if as_dict(event.get('roll')) or as_dict(o.get('negotiation')) or (as_dict(o.get('last_roll')) and not event.get('type')):
+            self.dice_card(box,o)
+        else:self.event_card(box,o)
+
+    def demand_strip(self, box, o):
+        x,y,w,h=box
+        demand=as_dict(o.get('demand'))
+        daily=as_dict(o.get('daily_event')) or as_dict(o.get('active_event'))
+        label=demand.get('label') or '行情平稳'
+        self.star(x+11,y+17,6,TEAL)
+        self.text((x+27,y+6),f'今日行情  ·  {label}',19,TEAL,False,w-27)
+        if daily:
+            label=daily.get('title') or daily.get('name') or daily.get('text','')
+            self.text((x+2,y+37),f'星港传闻  {label}',18,MUTED,False,w-4)
+            self.hits.append(((x,y+30,x+w,y+h),('inspect',dict(daily,name=label))))
+
+    def tab_bar(self, box):
+        x,y,w,h=box
+        tabw=w/len(TABS)
+        self.rect((x,y,x+w,y+h),'#162731',15)
+        for i,(key,label) in enumerate(TABS):
+            left=x+i*tabw
+            if key==self.tab:self.rect((left+4,y+4,left+tabw-4,y+h-4),'#405950',11)
+            self.text((left+tabw/2,y+16),label,18,INK if key==self.tab else MUTED,key==self.tab,anchor='mt')
+            self.hits.append(((left,y,left+tabw,y+h),('tab',key)))
+
+    def items(self, box, o, collection=False):
+        x,y,w,h=box
+        items=as_list(o.get('collection' if collection else 'inventory'))
+        capacity=o.get('capacity',len(items))
+        title='私藏的星光' if collection else '正在等待新主人的旧物'
+        self.text((x+2,y+6),title,22,INK,True)
+        extra=f'{len(items)} 件珍藏' if collection else f'{len(items)} / {capacity} 件'
+        self.text((x+w-2,y+10),extra,17,MUTED,anchor='rt')
+        row_h=96 if h>335 else 88
+        per_page=max(1,int((h-85)//row_h))
+        pages=max(1,math.ceil(len(items)/per_page)); page=self.page%pages
+        self.page_count=pages
+        visible=items[page*per_page:(page+1)*per_page]
+        if not visible:
+            self.rect((x,y+46,x+w,y+h-38),PANEL,18)
+            self.item_art(x+w/2-38,y+61,76,crate=not collection)
+            empty_y=y+145 if h>=220 else y+61
+            if h<220:self.rect((x,y+46,x+w,y+h-38),PANEL,18)
+            self.text((x+w/2,empty_y),'每件旧物，都值得被好好发现' if collection else '货架空着，星港的货箱正在等你',19,MUTED,False,w-36,2,anchor='mt')
+        for i,item in enumerate(visible):
+            item=as_dict(item);yy=y+45+i*row_h
+            rarity,col=RARITIES.get(item.get('rarity'),RARITIES['common'])
+            self.rect((x,yy,x+w,yy+row_h-9),PANEL,14)
+            self.rect((x+8,yy+8,x+row_h-18,yy+row_h-17),'#2a4148',12)
+            self.item_art(x+12,yy+10,row_h-33,item)
+            tx=x+row_h-4
+            price=item.get('price')
+            estimate=as_list(item.get('value_estimate'))
+            price_text='已珍藏' if collection else (f'{int(number(price))} 星币' if price is not None else (f'{estimate[0]}–{estimate[-1]}' if len(estimate)>1 else '尚未标价'))
+            reserve=max(105,font(19,True).getlength(price_text)+22)
+            self.text((tx,yy+12),item.get('name') or '未命名旧物',23,INK,True,w-(tx-x)-reserve-12)
+            self.text((x+w-16,yy+15),price_text,19,GOLD,True,anchor='rt')
+            detail=f"{rarity} · {KINDS.get(item.get('kind'),'旧物')}"
+            if not collection:detail+=(' · 还价中' if item.get('negotiating') else f" · 品相 {int(number(item.get('condition')))}%")
+            self.text((tx,yy+48),detail,16,col,False,w-(tx-x)-20)
+            self.hits.append(((x,yy,x+w,yy+row_h-9),('inspect',item)))
+        self.pagination((x,y+h-30,w,30), page, pages)
+
+    def pagination(self, box, page, pages):
+        x,y,w,h=box
+        if pages>1:
+            self.text((x+w/2,y+2),f'{page+1} / {pages}  ·  点击两侧翻页',16,MUTED,anchor='mt')
+            self.text((x+16,y),'‹',25,GOLD,True)
+            self.text((x+w-16,y),'›',25,GOLD,True,anchor='rt')
+            self.hits += [((x,y-5,x+w*.28,y+h),('page',-1)),((x+w*.72,y-5,x+w,y+h),('page',1))]
+        else:self.text((x+w/2,y+2),'只翻看展台 · 不会改变游戏',15,MUTED,anchor='mt')
+
+    def growth(self, box, o):
+        x,y,w,h=box
+        self.text((x+2,y+5),'把小店慢慢变成梦想的样子',22,INK,True,w-4)
+        upgrades=o.get('upgrades',{})
+        costs=as_dict(o.get('upgrade_costs'))
+        if isinstance(upgrades,dict): entries=[dict(id=k,level=v) if not isinstance(v,dict) else dict(v,id=k) for k,v in upgrades.items()]
+        else:entries=[as_dict(v) for v in as_list(upgrades)]
+        if as_list(o.get('upgrade_details')):entries=[as_dict(e) for e in o['upgrade_details']]
+        if not entries:entries=[{'id':'workbench','level':0},{'id':'shelf','level':0}]
+        entries += [dict(as_dict(e),is_set=True) for e in as_list(o.get('collection_sets'))]
+        per_page=max(1,int((h-80)/87)); pages=max(1,math.ceil(len(entries)/per_page)); page=self.page%pages
+        self.page_count=pages
+        for i,item in enumerate(entries[page*per_page:(page+1)*per_page]):
+            yy=y+46+i*87;key=item.get('id',''); level=int(number(item.get('level')))
+            self.rect((x,yy,x+w,yy+78),PANEL,14)
+            self.item_art(x+10,yy+10,58,{'kind':'tool' if key=='workbench' else 'artifact','color':TEAL if level else '#728884'})
+            self.text((x+82,yy+12),item.get('name') or UPGRADES.get(key,key or '小店设施'),22,INK,True,w-220)
+            cost=item.get('next_cost',costs.get(key))
+            desc=item.get('effect') or item.get('description') or (f'下次升级 {cost} 星币' if cost is not None else '店铺设施')
+            badge=f"{item.get('current',0)}/{item.get('required',3)}" if item.get('is_set') else f'Lv.{level}'
+            self.text((x+82,yy+45),desc,16,MUTED,False,w-98)
+            self.pill((x+w-94,yy+13),badge,GOLD,17,'#463d2d',11)
+            details=dict(item,description=(item.get('description') or item.get('effect','')) + (f"；下一次：{item.get('next_effect')}（{cost} 星币）" if cost is not None and item.get('next_effect') else ''))
+            self.hits.append(((x,yy,x+w,yy+78),('inspect',details)))
+        self.pagination((x,y+h-28,w,28),page,pages)
+
+    def journal(self, box, o):
+        x,y,w,h=box
+        self.text((x+2,y+5),'骰子记录' if self.journal_mode=='rolls' else '每一笔生意，都是一段航行',22,INK,True,w-151)
+        other='经营事件 ›' if self.journal_mode=='rolls' else '最近骰子 ›'
+        self.pill((x+w-141,y),other,TEAL,16,'#294441',12)
+        self.hits.append(((x+w-150,y,x+w,y+42),('journal_mode','events' if self.journal_mode=='rolls' else 'rolls')))
+        if self.journal_mode=='rolls':
+            return self.roll_history((x,y+48,w,h-48),o)
+        logs=list(reversed(as_list(o.get('log'))))
+        per_page=max(1,int((h-80)/91));pages=max(1,math.ceil(len(logs)/per_page));page=self.page%pages
+        self.page_count=pages
+        for i,entry in enumerate(logs[page*per_page:(page+1)*per_page]):
+            log=entry if isinstance(entry,dict) else {'text':str(entry)}; yy=y+49+i*91
+            self.ellipse((x+4,yy+8,x+12,yy+16),GOLD if i==0 and page==0 else '#64827e')
+            if i<per_page-1:self.line([(x+8,yy+24),(x+8,yy+84)],LINE,1)
+            self.text((x+27,yy),f"第 {log.get('day','?')} 天",15,GOLD if i==0 else MUTED)
+            self.text((x+27,yy+25),log.get('text',''),18,INK,False,w-34,2)
+            self.hits.append(((x,yy,x+w,yy+86),('inspect',dict(name=f"第 {log.get('day','?')} 天 · 经营事件",description=log.get('text','')))))
+        if not logs:self.text((x+15,y+70),'等第一位客人推开小店的门',21,MUTED)
+        self.pagination((x,y+h-28,w,28),page,pages)
+
+    def roll_history(self, box, o):
+        x,y,w,h=box
+        rolls=[public_roll(v) for v in reversed(as_list(o.get('roll_history'))) if as_dict(v)]
+        if not rolls and as_dict(o.get('last_roll')):rolls=[public_roll(o['last_roll'])]
+        rowh=105
+        per_page=max(1,int((h-32)/rowh));pages=max(1,math.ceil(len(rolls)/per_page));page=self.page%pages;self.page_count=pages
+        for i,roll in enumerate(rolls[page*per_page:(page+1)*per_page]):
+            yy=y+i*rowh;label,color=roll_status(roll)
+            self.rect((x,yy,x+w,yy+rowh-8),PANEL,14)
+            self.dice_art(x+9,yy+12,68,roll.get('face'),color)
+            tx=x+90
+            self.text((tx,yy+10),label,21,color,True,w-190)
+            stage='最终议价' if roll.get('stage')=='final' else '初次报价'
+            self.text((x+w-13,yy+14),f'第 {int(number(roll.get("day"),1))} 天',14,MUTED,anchor='rt')
+            self.text((tx,yy+43),f'{stage} · {roll.get("customer_name") or "旅客"} · {roll.get("item_name") or "旧物"}',15,INK,False,w-105)
+            self.text((tx,yy+70),roll_math(roll),14,MUTED,False,w-105)
+            self.hits.append(((x,yy,x+w,yy+rowh-8),('inspect',dict(roll,_view='roll'))))
+        if not rolls:
+            self.text((x+16,y+16),'还没有公开骰点',23,GOLD,True,w-32)
+            self.text((x+16,y+54),'店主下次报价后，真实判定会留在这里',18,MUTED,False,w-32,2)
+        self.pagination((x,y+h-27,w,27),page,pages)
+
+    def codex(self, box, o):
+        codex=as_dict(o.get('codex'))
+        if not as_list(codex.get('entries')):
+            return self.items(box,o,True)
+        x,y,w,h=box
+        entries=[as_dict(e) for e in codex['entries']]
+        entries.sort(key=lambda e:(not bool(e.get('collected')),not bool(e.get('discovered'))))
+        self.text((x+2,y+5),'旧物图鉴',22,INK,True)
+        self.text((x+w-2,y+10),f"发现 {codex.get('discovered',0)}/{codex.get('total',len(entries))} · 珍藏 {codex.get('collected',0)}",17,MUTED,anchor='rt')
+        per_page=max(1,int((h-80)/89));pages=max(1,math.ceil(len(entries)/per_page));page=self.page%pages;self.page_count=pages
+        for i,item in enumerate(entries[page*per_page:(page+1)*per_page]):
+            yy=y+45+i*89
+            found=item.get('discovered');collected=item.get('collected')
+            self.rect((x,yy,x+w,yy+80),PANEL,14)
+            art=dict(item)
+            if not found:art['color']='#68817d'
+            self.item_art(x+10,yy+9,61,art)
+            self.text((x+82,yy+11),item.get('name','未知旧物'),21,INK if found else MUTED,True,w-205)
+            self.text((x+w-16,yy+15),'已珍藏' if collected else '已发现' if found else '待寻访',17,GOLD if collected else TEAL if found else MUTED,anchor='rt')
+            self.text((x+82,yy+43),item.get('description',''),16,MUTED,False,w-101)
+            self.hits.append(((x,yy,x+w,yy+80),('inspect',item)))
+        self.pagination((x,y+h-28,w,28),page,pages)
+
+    def visitors(self, box, o):
+        x,y,w,h=box
+        visitors=[as_dict(v) for v in as_list(o.get('visitors'))]
+        waiting=sum(v.get('status') in ('waiting','negotiating') for v in visitors)
+        self.text((x+2,y+5),'今天谁推开了店门',22,INK,True,w-120)
+        self.text((x+w-2,y+9),f'{waiting} 位等候',17,TEAL,anchor='rt')
+        per_page=max(1,int((h-64)/109));pages=max(1,math.ceil(len(visitors)/per_page));page=self.page%pages;self.page_count=pages
+        for i,v in enumerate(visitors[page*per_page:(page+1)*per_page]):
+            yy=y+45+i*109
+            self.rect((x,yy,x+w,yy+99),PANEL,14)
+            # Illustrated astronaut portrait: decoration, not an extra hidden character.
+            self.ellipse((x+14,yy+17,x+76,yy+79),'#c5b797')
+            self.ellipse((x+21,yy+25,x+70,yy+65),'#34535a')
+            self.ellipse((x+33,yy+40,x+39,yy+46),GOLD);self.ellipse((x+52,yy+40,x+58,yy+46),GOLD)
+            self.text((x+93,yy+12),v.get('name','星港旅客'),23,INK,True,w-220)
+            status={'waiting':'正在等候','negotiating':'还价中','bought':'满载而归','left':'暂别小店'}.get(v.get('status'),'来店看看')
+            self.text((x+w-16,yy+16),status,17,LILAC if v.get('status')=='negotiating' else TEAL if v.get('status')=='waiting' else MUTED,anchor='rt')
+            self.text((x+93,yy+45),v.get('role','星港旅客'),16,GOLD,False,w-108)
+            self.text((x+93,yy+71),v.get('preference_label',''),16,MUTED,False,w-108)
+            budget=as_list(v.get('budget_range'))
+            desc=v.get('preference_label','')+(f"。公开预算 {budget[0]}–{budget[-1]} 星币。" if len(budget)>1 else '')
+            self.hits.append(((x,yy,x+w,yy+99),('inspect',dict(v,description=desc))))
+        if not visitors:self.text((x+18,y+65),'门口风铃静静响，下一位旅客还在路上',20,MUTED,False,w-36,2)
+        self.pagination((x,y+h-28,w,28),page,pages)
+
+    def detail_card(self, item):
+        if item.get('_view')=='roll':return self.roll_detail(item)
+        overlay=Image.new('RGBA',self.image.size,(6,16,24,210))
+        self.image=Image.alpha_composite(self.image.convert('RGBA'),overlay).convert('RGB')
+        self.draw=ImageDraw.Draw(self.image)
+        w=min(self.W-76,670);h=474;x=(self.W-w)/2;y=(self.H-h)/2
+        self.rect((x,y,x+w,y+h),'#263d45',25,'#7f9989',2)
+        self.hits=[((0,0,self.W,self.H),('close',None))]
+        self.text((x+28,y+24),'旧物档案',19,TEAL,True)
+        self.text((x+w-28,y+24),'点击任意处返回 ×',17,MUTED,anchor='rt')
+        self.item_art(x+w/2-64,y+71,128,item)
+        self.text((x+w/2,y+220),item.get('name','小店档案'),32,INK,True,w-50,1,anchor='mt')
+        self.text((x+31,y+284),item.get('description') or '这件旧物的故事，还在慢慢展开。',23,MUTED,False,w-62,5)
+
+    def roll_detail(self, source):
+        roll=public_roll(source)
+        overlay=Image.new('RGBA',self.image.size,(6,16,24,220))
+        self.image=Image.alpha_composite(self.image.convert('RGBA'),overlay).convert('RGB');self.draw=ImageDraw.Draw(self.image)
+        w=min(self.W-52,710);h=min(self.H-100,780);x=(self.W-w)/2;y=(self.H-h)/2
+        pending=as_dict(source.get('negotiation'))
+        label,color=roll_status(roll,pending)
+        self.rect((x,y,x+w,y+h),'#263d45',25,color,2)
+        self.hits=[((0,0,self.W,self.H),('close',None))]
+        self.text((x+24,y+24),'演示数据 · 骰子记录' if self.demo else '已判定的骰子记录',19,TEAL,True,w-145)
+        self.text((x+w-24,y+27),'点击返回 ×',16,MUTED,anchor='rt')
+        self.dice_art(x+w/2-72,y+73,144,roll.get('face'),color)
+        self.text((x+w/2,y+245),label,30,color,True,w-40,anchor='mt')
+        self.text((x+27,y+301),f'第 {int(number(roll.get("day"),1))} 天 · {"最终议价" if roll.get("stage")=="final" else "初次报价"}',19,MUTED,False,w-54)
+        self.text((x+27,y+338),f'{roll.get("customer_name") or "旅客"} · {roll.get("item_name") or "旧物"}',22,INK,True,w-54)
+        self.text((x+27,y+376),f'公开报价 {int(number(roll.get("price"))):,} 星币',23,GOLD,True,w-54)
+        self.text((x+27,y+421),roll_math(roll),21,INK,True,w-54)
+        modifiers=[as_dict(v) for v in as_list(roll.get('modifiers'))]
+        pieces=[f'{v.get("label", "修正")} {number(v.get("value")):+g}' for v in modifiers]
+        self.text((x+27,y+467),' · '.join(pieces) or '没有公开修正项',17,MUTED,False,w-54,2)
+        self.text((x+27,y+528),roll.get('explanation') or '此处只回看已经完成的公开判定，不会再次掷骰。',18,MUTED,False,w-54,3)
+        pending=as_dict(source.get('negotiation'))
+        if pending:
+            self.text((x+27,y+612),f'还价 {int(number(pending.get("counter_offer"))):,} 星币 · 待店主决定',20,LILAC,True,w-54)
+            self.text((x+27,y+647),'接受 / 谢绝免费；最后报价消耗 1 体力',17,INK,False,w-54,2)
+        self.line([(x+27,y+h-76),(x+w-27,y+h-76)],LINE,1)
+        self.text((x+27,y+h-60),'单次天然20：5%奇迹成交 · 天然1：直接告辞',16,GOLD,False,w-54,2)
+        self.text((x+27,y+h-29),'只读回看 · 不会再次掷骰或完成交易',14,MUTED,False,w-54)
+
+    def content(self, box, o):
+        if self.tab=='collection':self.codex(box,o)
+        elif self.tab=='visitors':self.visitors(box,o)
+        elif self.tab=='upgrades':self.growth(box,o)
+        elif self.tab=='journal':self.journal(box,o)
+        else:self.items(box,o)
+
+    def render(self, observation, size=(760,1240), tab='shelf', page=0, frame=0, error=None, detail=None, journal_mode='events', demo=False):
+        width,height=max(240,int(size[0])),max(320,int(size[1]))
+        wide=width/height>=1.16
+        narrow=width<600 and not wide
+        self.W,self.H=(1320,940) if wide else ((520,max(1100,round(height/width*520))) if narrow else (760,1240))
+        self.image=Image.new('RGB',(self.W,self.H),BG); self.draw=ImageDraw.Draw(self.image)
+        self.demo=bool(demo);self.journal_mode='rolls' if journal_mode=='rolls' else 'events'
+        self.words=[];self.hits=[];self.tab=tab if tab in dict(TABS) else 'shelf';self.page=max(0,page);self.page_count=1
+        o=as_dict(observation)
+        for yy in range(self.H):
+            p=yy/self.H
+            self.line([(0,yy),(self.W,yy)],(int(16+4*p),int(28+7*p),int(41+4*p)),1)
+        self.header(o,wide)
+        if not o:
+            self.shop_scene((32,169,self.W-64,round((self.W-64)*320/680)),{},frame)
+            cy=670 if not wide else 730
+            self.text((self.W/2,cy),error or '等候店长开门',34,GOLD,True,anchor='mt')
+            self.text((self.W/2,cy+56),'暖灯已亮起，等待公开的经营动态',22,MUTED,anchor='mt')
+        elif wide:
+            left=32;lw=706;right=762;rw=526
+            self.metrics((left,132,lw,98),o)
+            self.shop_scene((left,247,lw,306),o,frame)
+            self.demand_strip((left,563,lw,72),o)
+            self.current_event((left,650,lw,229),o)
+            self.goal_card((right,132,rw,140),o)
+            self.tab_bar((right,291,rw,56))
+            self.content((right,362,rw,517),o)
+        elif narrow:
+            self.metrics((22,120,476,88),o)
+            self.shop_scene((22,222,476,130),o,frame)
+            self.demand_strip((22,361,476,61),o)
+            self.current_event((22,431,476,218),o)
+            self.goal_card((22,663,476,127),o)
+            self.tab_bar((22,805,476,55))
+            self.content((22,876,476,self.H-918),o)
+        else:
+            self.metrics((32,125,696,90),o)
+            self.shop_scene((32,231,696,164),o,frame)
+            self.demand_strip((32,404,696,56),o)
+            self.current_event((32,473,696,218),o)
+            self.goal_card((32,697,696,130),o)
+            self.tab_bar((32,843,696,55))
+            self.content((32,914,696,282),o)
+        self.line([(32,self.H-33),(self.W-32,self.H-33)],LINE,1)
+        status=error or ('演示预览 · 未推进游戏' if self.demo else '首周已结算 · 等店长继续' if o.get('phase')=='week_summary' else '星港只读观战 · 纯虚拟星币')
+        self.text((32,self.H-24),status,14,RED if error else MUTED)
+        self.text((self.W-32,self.H-24),'F11 全屏' if narrow else '1–5 切换展台  ·  F11 全屏',13,MUTED,anchor='rt')
+        # A small, non-blocking ending label is compatible with old public files.
+        if o.get('phase')=='lost':self.pill((self.W//2-96,30),'本次航行结束',RED,19,'#503c36')
+        if detail:self.detail_card(as_dict(detail))
+        self.scale=min(width/self.W,height/self.H)
+        outw,outh=round(self.W*self.scale),round(self.H*self.scale)
+        self.offset=((width-outw)//2,(height-outh)//2)
+        image=self.image.resize((outw,outh),Image.Resampling.LANCZOS)
+        result=Image.new('RGB',(width,height),BG);result.paste(image,self.offset)
+        return result
+
+    def action_at(self, x, y):
+        if not hasattr(self,'scale'):return None
+        x=(x-self.offset[0])/self.scale;y=(y-self.offset[1])/self.scale
+        for (x1,y1,x2,y2),action in reversed(self.hits):
+            if x1<=x<=x2 and y1<=y<=y2:return action
+        return None
+
 
 class Spectator:
-    def __init__(self, path, fullscreen=False):
-        self.path = Path(path)
-        self.root = tk.Tk()
-        self.root.title('星际旧货铺 · AI 店长实时画面')
-        self.fonts = {}
-        self.text_images = {}
+    def __init__(self, path, fullscreen=False, geometry=None, demo=False, tab='shelf', page=0, journal_mode='events'):
+        # Tk stays lazy: importing the renderer and producing snapshots require no display.
+        import tkinter as tk
+        from PIL import ImageTk
+        self.tk=tk;self.ImageTk=ImageTk
+        self.reader=ObservationReader(path);self.demo=bool(demo);self.journal_mode='rolls' if journal_mode=='rolls' else 'events'
+        self.renderer=Renderer()
+        self.root=tk.Tk();self.root.title('星屑杂货铺 · D20 生意 / 只读观战' + (' · 演示' if self.demo else ''))
         self.root.configure(bg=BG)
-        sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
-        height = min(964, sh - 70)
-        width = round(height * 0.70)
-        self.root.geometry(f'{width}x{height}+{(sw-width)//2}+28')
-        self.root.minsize(440, 650)
-        self.root.attributes('-fullscreen', fullscreen)
-        self.canvas = tk.Canvas(self.root, bg=BG, highlightthickness=0)
-        self.canvas.pack(fill='both', expand=True)
-        self.root.bind('<F11>', lambda _ : self.root.attributes('-fullscreen', not self.root.attributes('-fullscreen')))
-        self.root.bind('<Escape>', lambda _ : self.root.attributes('-fullscreen', False))
-        self.root.bind('<space>', self.toggle_inventory)
-        self.root.bind('<Button-1>', self.toggle_inventory)
-        self.root.bind('<Configure>', lambda _: self.render())
-        self.obs = None
-        self.last_mtime = None
-        self.error = None
-        self.last_seq = None
-        self.event_at = time.monotonic()
-        self.inventory_page = 0
-        self.started = time.monotonic()
+        sw,sh=self.root.winfo_screenwidth(),self.root.winfo_screenheight()
+        self.root.geometry(geometry or f'{min(1320,sw-60)}x{min(940,sh-90)}+30+30')
+        self.root.minsize(320,500)
+        self.root.attributes('-fullscreen',fullscreen)
+        self.canvas=tk.Canvas(self.root,bg=BG,highlightthickness=0)
+        self.canvas.pack(fill='both',expand=True)
+        self.photo=None;self.canvas_image=self.canvas.create_image(0,0,anchor='nw')
+        self.tab=tab if tab in dict(TABS) else 'shelf';self.page=max(0,page);self.detail=None;self.started=time.monotonic();self.last_signature=None
+        self.root.bind('<F11>',lambda _:self.root.attributes('-fullscreen',not self.root.attributes('-fullscreen')))
+        self.root.bind('<Escape>',self.escape)
+        for key,(tab,_) in zip('12345',TABS):self.root.bind(key,lambda _,t=tab:self.set_tab(t))
+        self.root.bind('<Left>',lambda _:self.turn_page(-1))
+        self.root.bind('<Right>',lambda _:self.turn_page(1))
+        self.root.bind('<space>',lambda _:self.turn_page(1))
+        self.canvas.bind('<Button-1>',self.click)
+        self.root.protocol('WM_DELETE_WINDOW',self.root.destroy)
         self.tick()
 
-    def toggle_inventory(self, _=None):
-        self.inventory_page += 1
-        self.render()
+    def escape(self, event=None):
+        if self.detail is not None:self.detail=None;self.last_signature=None
+        else:self.root.attributes('-fullscreen',False)
 
-    def text(self, x, y, text, size=18, color=INK, bold=False, anchor='nw', width=None):
-        # This desktop's Tk uses core X fonts. Render CJK with its installed
-        # Noto font through Pillow, then show native PhotoImages on the canvas.
-        pixels=max(9, round(size*self.s))
-        key=(str(text),pixels,color,bold,round(width*self.s) if width else None)
-        if key not in self.text_images:
-            if (pixels,bold) not in self.fonts:
-                name='NotoSansCJK-Bold.ttc' if bold else 'NotoSansCJK-Regular.ttc'
-                self.fonts[pixels,bold]=ImageFont.truetype('/usr/share/fonts/opentype/noto/'+name,pixels,index=2)
-            font=self.fonts[pixels,bold]
-            lines=[]
-            for paragraph in str(text).split('\n'):
-                line=''
-                for char in paragraph:
-                    if width and font.getlength(line+char)>width*self.s and line:
-                        lines.append(line);line=char
-                    else:line+=char
-                lines.append(line)
-            line_h=round(pixels*1.34)
-            iw=max(1,math.ceil(max(font.getlength(line) for line in lines))+4)
-            ih=max(1,line_h*len(lines))
-            im=Image.new('RGBA',(iw,ih),(0,0,0,0))
-            draw=ImageDraw.Draw(im)
-            for i,line in enumerate(lines):draw.text((1,i*line_h),line,font=font,fill=color,anchor='lt')
-            if len(self.text_images)>500:self.text_images.clear()
-            self.text_images[key]=ImageTk.PhotoImage(im,master=self.root)
-        return self.canvas.create_image(self.ox+x*self.s,self.oy+y*self.s,image=self.text_images[key],anchor=anchor)
+    def set_tab(self, tab):
+        self.tab=tab;self.page=0;self.detail=None;self.last_signature=None
 
-    def rect(self, x1, y1, x2, y2, fill=PANEL, outline='', width=1):
-        return self.canvas.create_rectangle(self.ox+x1*self.s, self.oy+y1*self.s, self.ox+x2*self.s, self.oy+y2*self.s, fill=fill, outline=outline, width=width*self.s)
+    def turn_page(self, delta):
+        self.page=(self.page+delta)%max(1,self.renderer.page_count);self.last_signature=None
 
-    def oval(self,x1,y1,x2,y2,fill,outline='',width=1):
-        return self.canvas.create_oval(self.ox+x1*self.s,self.oy+y1*self.s,self.ox+x2*self.s,self.oy+y2*self.s,fill=fill,outline=outline,width=width*self.s)
-
-    def line(self,*pts,fill=INK,width=1):
-        out=[]
-        for i, p in enumerate(pts): out.append((self.ox if i%2==0 else self.oy)+p*self.s)
-        return self.canvas.create_line(*out,fill=fill,width=width*self.s)
-
-    def poly(self, pts,fill,outline='',width=1):
-        out=[]
-        for i,p in enumerate(pts):out.append((self.ox if i%2==0 else self.oy)+p*self.s)
-        return self.canvas.create_polygon(*out,fill=fill,outline=outline,width=width*self.s)
-
-    def progress(self,x,y,w,value,goal,color=CYAN):
-        self.rect(x,y,x+w,y+6,'#26334c')
-        self.rect(x,y,x+w*min(1,max(0,value/max(1,goal))),y+6,color)
-
-    def item_art(self,x,y,size,item=None,crate=False,anim=0):
-        # Original vector artwork, scaled from a 100-unit icon.
-        color = (item or {}).get('color', CYAN)
-        if not isinstance(color,str) or not color.startswith('#'): color=CYAN
-        kind = (item or {}).get('kind','artifact')
-        def R(a,b,c,d,f,o='',w=1):self.rect(x+a*size,y+b*size,x+c*size,y+d*size,f,o,w*size)
-        def O(a,b,c,d,f,o='',w=1):self.oval(x+a*size,y+b*size,x+c*size,y+d*size,f,o,w*size)
-        def L(pts,f,w=1):self.line(*[x+v*size if i%2==0 else y+v*size for i,v in enumerate(pts)],fill=f,width=w*size)
-        def P(pts,f,o='',w=1):self.poly([x+v*size if i%2==0 else y+v*size for i,v in enumerate(pts)],f,o,w*size)
-        if crate:
-            P([12,31,49,14,91,32,52,53], '#416480', '#92d6df',2)
-            P([12,31,52,53,52,91,12,70], '#24455d', '#78bbc9',2)
-            P([52,53,91,32,91,70,52,91], '#18354f', '#78bbc9',2)
-            L([32,22,72,42,72,81],GOLD,5)
-            L([12,51,52,73,91,51],'#486c84',2)
-            self.text(x+31*size,y+42*size,'?',round(24*size),GOLD,True)
-        elif kind == 'bot':
-            L([50,18,50,6],color,4); O(45,1,55,11,GOLD)
-            R(19,20,81,66,color,'#dffcff',2);R(26,31,74,51,'#13273c')
-            O(34,36,43,45,CYAN);O(57,36,66,45,CYAN)
-            R(28,68,72,84,'#6887a6');L([30,86,22,94],color,7);L([70,86,78,94],color,7)
-            L([17,35,6,55,12,69],color,5);L([83,35,94,55,89,68],color,5)
-        elif kind == 'plant':
-            L([49,71,48,32], '#77bd94',4)
-            O(16,19,50,44,color);O(48,9,81,35,'#70d9b0');O(48,39,81,62,color)
-            P([25,65,77,65,68,93,34,93],'#cb907e','#ffe0b9',2)
-            R(22,62,80,69,'#ebbd9a');O(28,26,35,31,'#c8ffdf')
-        elif kind == 'tool':
-            P([40,36,58,47,39,91,22,82], '#748eb7',color,2)
-            P([36,9,55,5,46,23,61,31,77,16,83,39,66,53,43,44,30,26], color,'#dcf4ff',2)
-            O(27,79,34,86,'#172b45')
-        elif kind == 'signal':
-            R(18,42,82,85,'#45698a',color,2);R(27,51,63,72,'#142c46')
-            L([30,61,37,61,41,55,48,69,53,60,59,60],CYAN,2)
-            O(67,56,76,65,GOLD);L([63,40,81,9],color,3)
-            L([34,28,39,21,48,18,55,20],color,3)
-            L([25,18,33,9,46,5,58,8],color,2)
-        else:
-            O(7,19,92,87,'#18253f',color,2)
-            P([50,6,80,49,50,93,20,49],color,'#effdff',2)
-            P([50,6,50,93,20,49],'#59719c')
-            L([20,49,80,49],'#edf8ff',1)
-            O(43,39,57,54,'#f5fcff')
-
-    def scene(self,o):
-        self.rect(22,236,638,505,'#101e38', '#294665')
-        self.rect(32,246,628,476,'#09162d')
-        t=time.monotonic()-self.started
-        for i in range(45):
-            x=40+(i*79%576);y=253+(i*47%168)
-            radius=1+(i%3==0)
-            self.oval(x,y,x+radius,y+radius,'#688cb4' if i%3 else '#b7d2e8')
-        self.oval(453,261,547,355,'#304564')
-        self.oval(466,263,527,321,'#465b77')
-        self.line(431,330,566,289,fill='#7593a8',width=3)
-        self.rect(32,448,628,488,'#1b3651')
-        self.line(32,448,628,448,fill='#538199',width=2)
-        self.poly([98,424,444,424,496,447,63,447],'#294a66','#6998b0')
-        self.rect(107,448,445,476,'#18324b')
-        self.line(118,455,433,455,fill='#416883',width=2)
-        self.text(48,259,'ORBIT / 旧货回收舱',12,'#85a6bf')
-        self.text(615,259,'LIVE',12,CYAN,True,anchor='ne')
-        evt=o.get('last_event',{})
-        elapsed=time.monotonic()-self.event_at
-        item=evt.get('item')
-        if not item and o.get('inventory'):item=o['inventory'][-1]
-        reveal=evt.get('type')=='reveal' and elapsed<4.5
-        opening=reveal and elapsed<0.9
-        iscrate=opening or (not item and bool(o.get('crates')))
-        if reveal:
-            color=RARITIES.get((item or {}).get('rarity'),('普通',CYAN))[1]
-            for i in range(14):
-                a=i*math.tau/14+t*.45
-                r=95+12*math.sin(t*2+i)
-                cx=300+math.cos(a)*r;cy=365+math.sin(a)*r*.58
-                self.line(cx,cy,cx+math.cos(a)*9,cy+math.sin(a)*9,fill=color,width=2)
-        if item or iscrate:
-            if item and not iscrate:
-                rare,col=RARITIES.get(item.get('rarity'),RARITIES['common'])
-                self.text(330,286,f'✦  {rare}发现  ✦',17,col,True,anchor='n')
-            self.item_art(248,315+math.sin(t*2)*2,1.10,item,iscrate)
-            label='正在开启货箱…' if opening else (item or {}).get('name','神秘货箱已入港')
-            self.text(330,468,label,20,INK,True,anchor='center')
-        else:
-            self.item_art(226,312+math.sin(t*1.5)*2,1.18,crate=True)
-            self.text(398,347,'下一箱\n会是什么？',24,INK,True,width=180)
-            self.text(330,477,'从一间破飞船小店开始',17,MUTED,anchor='center')
-        self.text(330,512,evt.get('title','小店开门了'),24,GOLD,True,anchor='n')
-        self.text(330,548,evt.get('text','等待 AI 店长的第一笔进货'),16,INK,anchor='n',width=586)
-
-    def render(self):
-        if not hasattr(self,'canvas'):return
-        c=self.canvas;c.delete('all')
-        w,h=max(c.winfo_width(),440),max(c.winfo_height(),650)
-        self.s=min(w/660,h/944);self.ox=(w-660*self.s)/2;self.oy=(h-944*self.s)/2
-        o=self.obs
-        self.rect(0,0,660,944,BG)
-        if not o:
-            self.text(330,365,'星际旧货铺',42,CYAN,True,anchor='center')
-            self.text(330,435,self.error or '等候店长开门…',20,INK,anchor='center',width=590)
-            return
-        self.text(24,15,'星际旧货铺',34,INK,True)
-        self.text(24,64,'盲箱进货  ·  修理估价  ·  好好经营',15,MUTED)
-        self.text(635,24,f"第 {o.get('day',1)} / 7 天",23,CYAN,True,anchor='ne')
-        self.rect(22,95,638,158,PANEL)
-        self.text(38,102,'可用星币',14,MUTED)
-        self.text(38,121,f"{o.get('credits',0):,}",28,GOLD,True)
-        self.text(282,103,'体力',14,MUTED)
-        self.text(282,126,f"{o.get('energy',0)} / {o.get('max_energy',0)}",21,INK,True)
-        self.text(445,103,'店铺声望',14,MUTED)
-        self.text(445,126,f"★ {o.get('reputation',0)}",21,CYAN,True)
-        goal=o.get('goal',{});collection=len(o.get('collection',[]))
-        self.text(24,172,f"七日目标  {o.get('credits',0)} / {goal.get('credits',650)} 星币",15,MUTED)
-        self.text(638,172,f"珍藏 {collection} / {goal.get('collection',2)}",15,GOLD,anchor='ne')
-        self.progress(24,203,408,o.get('credits',0),goal.get('credits',650))
-        self.progress(454,203,184,collection,goal.get('collection',2),GOLD)
-        demand=o.get('demand',{})
-        self.text(24,216,f"今日行情 · {demand.get('label','平稳')} ",12,CYAN)
-        self.scene(o)
-        self.line(24,598,638,598,fill='#213952')
-        self.text(24,610,'货架与珍藏',20,INK,True)
-        inventory=o.get('inventory',[])
-        self.text(638,615,f"货箱 {len(o.get('crates',[]))}  ·  藏品 {collection}",14,MUTED,anchor='ne')
-        pages=max(1,math.ceil(len(inventory)/3));p=self.inventory_page%pages
-        visible=inventory[p*3:p*3+3]
-        if not visible:
-            self.rect(24,649,636,725,PANEL)
-            self.text(330,675,'货架还空着，先选一箱神秘货物',18,MUTED,anchor='n')
-        for i,item in enumerate(visible):
-            y=648+i*49
-            self.rect(24,y,636,y+43,PANEL)
-            rare,col=RARITIES.get(item.get('rarity'),RARITIES['common'])
-            self.item_art(34,y+3,.34,item)
-            self.text(81,y+3,item.get('name','未知物品'),18,INK,True)
-            self.text(81,y+26,f"{item.get('id','')}  ·  {rare}  ·  完好 {item.get('condition',0)}%",10,col)
-            est=item.get('value_estimate',[0,0]);price=item.get('price')
-            self.text(622,y+7,f"标价 {price}" if price else f"估值 {est[0]}–{est[1]}",16,GOLD,anchor='ne')
-        if pages>1:self.text(636,799,f'{p+1}/{pages}  点击翻页',10,MUTED,anchor='ne')
-        self.line(24,808,638,808,fill='#213952')
-        self.text(24,820,'店长日志',15,CYAN,True)
-        logs=o.get('log',[])[-3:]
-        for i,log in enumerate(reversed(logs)):
-            msg=log.get('text','') if isinstance(log,dict) else str(log)
-            if len(msg)>38:msg=msg[:37]+'…'
-            self.text(24,848+i*23,msg,13,INK if i==0 else MUTED)
-        self.text(24,926,'AI 店长实时操作  ·  纯虚拟星币',11,MUTED,anchor='sw')
-        self.text(638,926,'F11 全屏',11,MUTED,anchor='se')
-        if o.get('phase') in ('won','lost'):
-            self.rect(50,300,610,473,'#16283f',GOLD,2)
-            self.text(330,324,'小店毕业！' if o['phase']=='won' else '这趟旅程结束了',32,GOLD,True,anchor='n')
-            self.text(330,383,f"结余 {o.get('credits',0)} 星币 · 珍藏 {collection} 件",22,INK,anchor='n')
-            self.text(330,430,'每一件旧物，都有下一段旅程',17,MUTED,anchor='n')
-        if self.error:self.text(330,934,'状态读取中：'+self.error,10,'#ffb3a9',anchor='s',width=600)
+    def click(self,event):
+        action=self.renderer.action_at(event.x,event.y)
+        if action:
+            if action[0]=='tab':self.set_tab(action[1])
+            elif action[0]=='page':self.turn_page(action[1])
+            elif action[0]=='show_rolls':self.set_tab('journal');self.journal_mode='rolls'
+            elif action[0]=='journal_mode':self.journal_mode=action[1];self.page=0;self.last_signature=None
+            elif action[0]=='inspect':self.detail=action[1];self.last_signature=None
+            elif action[0]=='close':self.detail=None;self.last_signature=None
 
     def tick(self):
-        try:
-            mtime=self.path.stat().st_mtime_ns
-            if mtime != self.last_mtime:
-                data=json.loads(self.path.read_text())
-                if not isinstance(data,dict) or 'credits' not in data:raise ValueError('等待有效游戏状态')
-                seq=data.get('last_event',{}).get('seq',data.get('revision'))
-                if seq!=self.last_seq:self.event_at=time.monotonic();self.last_seq=seq
-                self.obs=data;self.last_mtime=mtime;self.error=None
-        except (OSError,ValueError) as exc:self.error='等待游戏状态' if not self.obs else str(exc)[:60]
-        self.render()
-        self.root.after(80,self.tick)
+        self.reader.poll()
+        w,h=self.canvas.winfo_width(),self.canvas.winfo_height()
+        if w>10 and h>10:
+            signature=(self.reader.stamp,w,h,self.tab,self.page,self.reader.error,str(self.detail),self.journal_mode,self.demo)
+            if signature!=self.last_signature:
+                im=self.renderer.render(self.reader.observation,(w,h),self.tab,self.page,frame=0,error=self.reader.error,detail=self.detail,journal_mode=self.journal_mode,demo=self.demo)
+                self.photo=self.ImageTk.PhotoImage(im,master=self.root)
+                self.canvas.itemconfigure(self.canvas_image,image=self.photo)
+                self.last_signature=signature
+        self.root.after(250,self.tick)
 
     def run(self):self.root.mainloop()
 
-if __name__=='__main__':
-    parser=argparse.ArgumentParser(description='星际旧货铺：只读原生观战画面')
+
+def main(argv=None):
+    parser=argparse.ArgumentParser(description='星屑杂货铺：只读取公开状态的原生观战窗口')
     parser.add_argument('--observation',default=str(Path(__file__).with_name('observation.json')))
     parser.add_argument('--fullscreen',action='store_true')
-    a=parser.parse_args()
-    Spectator(a.observation,a.fullscreen).run()
+    parser.add_argument('--geometry',help='可选窗口尺寸，例如 760x1240')
+    parser.add_argument('--snapshot',help='保存只读画面的 PNG 截图，不启动窗口')
+    parser.add_argument('--width',type=int,default=760)
+    parser.add_argument('--height',type=int,default=1240)
+    parser.add_argument('--tab',choices=list(dict(TABS)),default='shelf')
+    parser.add_argument('--page',type=int,default=0)
+    parser.add_argument('--journal-mode',choices=['events','rolls'],default='events')
+    parser.add_argument('--demo',action='store_true',help='明显标记为演示数据，不是真实游玩')
+    args=parser.parse_args(argv)
+    if args.snapshot:
+        output=Path(args.snapshot)
+        # Protect both public state and private saves from accidental screenshot paths.
+        if output.suffix.lower()!='.png':parser.error('--snapshot 必须是独立的 .png 文件')
+        if output.resolve()==Path(args.observation).resolve():parser.error('截图不能覆盖公开状态')
+        reader=ObservationReader(args.observation);reader.poll()
+        image=Renderer().render(reader.observation,(args.width,args.height),args.tab,args.page,error=reader.error,journal_mode=args.journal_mode,demo=args.demo)
+        output.parent.mkdir(parents=True,exist_ok=True);image.save(output,'PNG')
+        print(output)
+        return 0
+    Spectator(args.observation,args.fullscreen,args.geometry,args.demo,args.tab,args.page,args.journal_mode).run()
+    return 0
+
+
+if __name__=='__main__':raise SystemExit(main())

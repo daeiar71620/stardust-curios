@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""星屑杂货铺 — persistent, standard-library-only ongoing shop simulation.
+"""星际旧货铺 — persistent, standard-library-only ongoing shop simulation.
 
 The GUI must read the public observation, never the private save. All mutations
 run through this CLI (or GameStore.execute), under an advisory file lock.
@@ -20,7 +20,7 @@ import sys
 import tempfile
 from contextlib import contextmanager
 
-VERSION = 3
+VERSION = 2
 TOTAL_DAYS = 7
 DEFAULT_SAVE = Path(__file__).resolve().with_name("save.json")
 GOAL = {"credits": 650, "collection": 2}
@@ -64,11 +64,11 @@ SUPPLIERS = {
 UPGRADE_RULES = {
     "workbench": {"name": "工作台", "costs": [70, 110, 260], "effects": ["基础修理：失手24%", "修理费减18%，失手14%", "修理费减36%，失手7%", "修理费减54%，失手3%"]},
     "shelf": {"name": "货架", "costs": [65, 100, 240], "effects": ["7格货架 / 每日12精力", "10格货架 / 每日13精力", "13格货架 / 每日14精力", "16格货架 / 每日15精力"]},
-    "display": {"name": "展示柜", "costs": [120, 230, 420], "effects": ["朴素展示", "成交检定+1", "成交检定+2 / 多1位访客", "成交检定+3 / 多1位访客"]},
+    "display": {"name": "展示柜", "costs": [120, 230, 420], "effects": ["朴素展示", "买家愿付价格+5%", "买家愿付价格+10% / 多1位访客", "买家愿付价格+15% / 多1位访客"]},
 }
 SET_RULES = {
     "tool": ("星港修理铺", "收藏3种工具，所有修理费再减4星币"),
-    "artifact": ("小小宇宙馆", "收藏3种奇物，所有成交检定+1"),
+    "artifact": ("小小宇宙馆", "收藏3种奇物，所有买家愿付价格+5%"),
     "bot": ("值夜小分队", "收藏3种机器人，每日精力+1"),
     "plant": ("窗边温室", "收藏3种植物，每日维护费减4星币"),
     "signal": ("远方的朋友", "收藏3种信号物品，回收箱每日供货+1"),
@@ -76,9 +76,9 @@ SET_RULES = {
 EVENTS = [
     {"id": "calm", "title": "平静靠港日", "description": "航道平稳，适合整理库存和照顾收藏。", "sale_multiplier": 1.0, "salvage_discount": 0, "repair_discount": 0, "cost_delta": 0, "energy_delta": 0},
     {"id": "meteor", "title": "流星回收潮", "description": "回收箱便宜8星币；忙碌的搬运让每日精力少1点。", "sale_multiplier": 1.0, "salvage_discount": 8, "repair_discount": 0, "cost_delta": 0, "energy_delta": -1},
-    {"id": "festival", "title": "星灯夜市", "description": "成交检定+2；照明维护费多6星币。", "sale_multiplier": 1.12, "salvage_discount": 0, "repair_discount": 0, "cost_delta": 6, "energy_delta": 0},
+    {"id": "festival", "title": "星灯夜市", "description": "买家愿付价格+12%；照明维护费多6星币。", "sale_multiplier": 1.12, "salvage_discount": 0, "repair_discount": 0, "cost_delta": 6, "energy_delta": 0},
     {"id": "workshop", "title": "机修师互助日", "description": "修理费减6星币；适合给有潜力的旧物第二次机会。", "sale_multiplier": 1.0, "salvage_discount": 0, "repair_discount": 6, "cost_delta": 0, "energy_delta": 0},
-    {"id": "fog", "title": "星云浓雾", "description": "来客更谨慎，成交检定-2；港务处减免4星币维护费。", "sale_multiplier": 0.90, "salvage_discount": 0, "repair_discount": 0, "cost_delta": -4, "energy_delta": 0},
+    {"id": "fog", "title": "星云浓雾", "description": "来客更谨慎，愿付价格-10%；港务处减免4星币维护费。", "sale_multiplier": 0.90, "salvage_discount": 0, "repair_discount": 0, "cost_delta": -4, "energy_delta": 0},
     {"id": "tailwind", "title": "顺风补给日", "description": "物流顺畅，每日精力+1，今天可以多做一件事。", "sale_multiplier": 1.0, "salvage_discount": 0, "repair_discount": 0, "cost_delta": 0, "energy_delta": 1},
 ]
 CUSTOMERS = [
@@ -106,24 +106,18 @@ HELP = """星屑杂货铺 · 七天首周，长期经营
   inspect I001              查看公开估值，不改变运气
   repair I001               修理，2精力，每件最多2次、每天1次
   price I001 120            免费定价，1–9999整数
-  sell I001 [顾客ID]         初次D20成交检定，1精力；省略顾客为旅客
-  accept I001               接受客人的唯一还价，免费且不掷骰
-  decline I001              谢绝还价，免费且结束当天接待
-  offer I001 120            最终报价，1–初次标价，1精力；最后一次D20
+  sell I001 [顾客ID]         售卖，1精力；省略顾客ID为普通旅客
   collect I001              永久收藏，1精力；3种同类收藏解锁套装效果
   upgrade workbench|shelf|display  升级，2精力，每项3级
   endday                    支付当日维护费，推进日期
   continue                  首周结算后明确继续到第8天；不重开、不再扣第7天费用
-  import-v2 原存档路径       只读扩展版并升级至新的 --save 路径；原文件不变
   import-v1 原存档路径       只读旧版并迁移至新的 --save 路径；原文件不变
   restart --confirm         明确清空当前这一个存档并开新局
   help                      查看命令
 
 24种货物、每日事件、偏好顾客、5种收藏套装和持续阶段目标。
 现金用于经营、修理、扩店；收藏不可卖回。顾客预算与成交价有不确定性。
-每天每件货物只有一场接待，最多初次与最终两骰；每位特邀顾客只接待一次。
-天然20一见钟情：突破普通意愿与预算，按合法报价成交；天然1失手直接结束。
-普通失败给一次还价，待谈时锁定该货；endday自动谢绝未完成谈判。
+每天每件货物只能销售尝试一次，每位特邀顾客也只有一次接待机会。
 公开observation不包含箱内货物、真实基价、买家确切预算或随机状态。
 """
 
@@ -248,8 +242,7 @@ def new_state(seed=None):
         "daily_event": copy.deepcopy(EVENTS[0]), "visitors": [], "discovered": [],
         "first_week_result": "pending", "milestones": [],
         "stats": {"crates_opened": 0, "sales_count": 0, "gross_earnings": 0, "days_traded": 0},
-        "migration": None, "engine_upgrade": None,
-        "negotiation": None, "roll_seq": 0, "roll_history": [],
+        "migration": None,
     }
     state["visitors"] = _make_visitors(rng, state)
     state["rng"] = rng.getstate()
@@ -323,7 +316,6 @@ def _public_item(state, item):
         "sale_attempted_today": item.get("last_sale_day", 0) == state["day"],
         "repair_attempted_today": item.get("last_repair_day", 0) == state["day"],
         "repairs_remaining": max(0, 2 - item.get("repairs", 0)),
-        "negotiating": bool(state["negotiation"] and state["negotiation"]["item_id"] == item["id"]),
     }
 
 
@@ -347,14 +339,6 @@ def observation(state):
                              "current": len({i["catalog_id"] for i in state["collection"] if i["kind"] == kind}),
                              "completed": _has_set(state, kind), "perk": value[1]} for kind, value in SET_RULES.items()],
         "stats": copy.deepcopy(state["stats"]), "migration": copy.deepcopy(state["migration"]),
-        "engine_upgrade": copy.deepcopy(state["engine_upgrade"]),
-        "negotiation": _public_negotiation(state),
-        "last_roll": copy.deepcopy(state["roll_history"][-1]) if state["roll_history"] else None,
-        "roll_history": copy.deepcopy(state["roll_history"]),
-        "trade_rules": {"die": "D20", "natural_20": "一见钟情，突破普通意愿和预算，按本次合法报价成交",
-                        "natural_1": "失手，本日该货接待立即结束", "max_rolls_per_item_day": 2,
-                        "price_limit": 9999, "final_offer_energy": 1,
-                        "endday": "自动谢绝未完成还价", "miracle_probability": 0.05},
     }
 
 
@@ -389,111 +373,6 @@ def _make_cargo(rng, supplier):
             "description": description, "origin": SUPPLIERS[supplier]["name"],
             "collected": False, "repairs": 0, "last_sale_day": 0, "last_repair_day": 0}
 
-
-
-def _public_negotiation(state):
-    pending = state["negotiation"]
-    if pending is None:
-        return None
-    keys = ("item_id", "item_name", "customer_id", "customer_name", "original_price", "counter_offer")
-    return {key: copy.deepcopy(pending[key]) for key in keys} | {
-        "remaining_offers": 1, "final_offer_energy": 1,
-        "commands": {"accept": f"accept {pending['item_id']}", "decline": f"decline {pending['item_id']}",
-                     "offer": f"offer {pending['item_id']} 金额"}}
-
-
-def _require_unlocked_item(state, item):
-    if state["negotiation"] and state["negotiation"]["item_id"] == item["id"]:
-        raise GameError("这件货正在讨价还价；请先 accept、decline 或 offer，不能换价签、修理或收藏。")
-
-
-def _trade_context(state, item, visitor):
-    # Snapshot all judgement inputs before the first die. Changes elsewhere in the
-    # shop cannot improve a pending final roll. No hidden willingness random draw.
-    modifiers = []
-    def add(label, value):
-        if value:
-            modifiers.append({"label": label, "value": value})
-    add("口碑", min(state["reputation"], 15) // 5)
-    add("展示柜", state["upgrades"]["display"])
-    add("奇物收藏套装", int(_has_set(state, "artifact")))
-    event_id = state["daily_event"]["id"]
-    add("星灯夜市", 2 if event_id == "festival" else 0)
-    add("星云浓雾", -2 if event_id == "fog" else 0)
-    if visitor:
-        add("顾客偏爱" if item["kind"] == visitor["preferred_kind"] else "偏好不合",
-            3 if item["kind"] == visitor["preferred_kind"] else -2)
-        add("符合品相期待" if item["condition"] >= visitor["min_condition"] else "品相未达期待",
-            1 if item["condition"] >= visitor["min_condition"] else -2)
-    return {"reference": _actual_value(state, item), "budget": visitor["budget"] if visitor else None,
-            "modifiers": modifiers, "modifier": sum(m["value"] for m in modifiers)}
-
-
-def _trade_target(context, price):
-    # Rounded DC reveals a broad difficulty band, never the exact hidden value.
-    # Quality and demand affect reference; preferences, reputation, display and
-    # events are explicit bonuses. Ordinary outcomes respect the frozen budget.
-    target = max(2, min(99, math.ceil(11 + 10 * math.log2(price / context["reference"]))))
-    if context["budget"] is not None and price > context["budget"]:
-        target = max(target, 20 + context["modifier"])
-    return target
-
-
-
-def _counter_offer(context, asking):
-    # Coarse quote bands avoid encoding precise hidden base or budget amounts.
-    offer = max(1, math.floor(context["reference"] * (0.75 + context["modifier"] * 0.025) / 10) * 10)
-    if context["budget"] is not None:
-        offer = min(offer, max(1, context["budget"] // 25 * 20))
-    return max(1, min(asking - 1, offer))
-
-def _trade_roll(state, rng, item, visitor, price, context, stage):
-    face = rng.randint(1, 20)
-    target = _trade_target(context, price)
-    total = face + context["modifier"]
-    success = face == 20 or (face != 1 and total >= target)
-    outcome = "miracle" if face == 20 else "fumble" if face == 1 else "success" if success else "failure"
-    explanation = {"miracle": "天然20 · 一见钟情！幸运奇迹突破普通意愿与预算，按本次报价成交。",
-                   "fumble": "天然1 · 话没说投机，客人告辞；今日这件货接待结束。",
-                   "success": "D20 + 加值达到目标，正常成交。",
-                   "failure": "D20 + 加值未达目标。"}[outcome]
-    if target > 19 + context["modifier"]:
-        explanation += " 这次报价只有天然20能成交。"
-    state["roll_seq"] += 1
-    record = {"id": state["roll_seq"], "day": state["day"], "item_id": item["id"], "item_name": item["name"],
-              "customer_id": visitor["id"] if visitor else None, "customer_name": visitor["name"] if visitor else "旅客",
-              "stage": stage, "face": face, "modifier": context["modifier"],
-              "modifiers": copy.deepcopy(context["modifiers"]), "total": total, "target": target,
-              "success": success, "outcome": outcome, "price": price, "explanation": explanation}
-    state["roll_history"].append(record)
-    state["roll_history"] = state["roll_history"][-60:]
-    return record
-
-
-def _sale_settle(state, item, visitor, price):
-    state["credits"] += price
-    reputation = (2 if item["rarity"] == "legendary" else 1) + int(visitor is not None and item["kind"] == visitor["preferred_kind"])
-    state["reputation"] = min(99, state["reputation"] + reputation)
-    state["stats"]["sales_count"] += 1
-    state["stats"]["gross_earnings"] += price
-    item["price"] = price
-    state["inventory"].remove(item)
-    if visitor:
-        visitor["status"] = "bought"
-    return reputation
-
-
-def _close_negotiation(state):
-    pending = state["negotiation"]
-    if pending:
-        visitor = next((v for v in state["visitors"] if v["id"] == pending["customer_id"]), None)
-        if visitor:
-            visitor["status"] = "left"
-        state["negotiation"] = None
-
-
-def _roll_text(roll):
-    return f"D20掷出{roll['face']}，加值{roll['modifier']:+d}，合计{roll['total']} / 目标{roll['target']}。{roll['explanation']}"
 
 def apply_command(state, command, args):
     """Mutate an already-copied state. Errors must be discarded by its caller."""
@@ -543,7 +422,6 @@ def apply_command(state, command, args):
         _event(state, "reveal", "封条揭开", f"开出了{RARITIES[item['rarity']]}物品「{item['name']}」！品相 {item['condition']}%，初始标价 {item['price']} 星币。", item)
     elif command == "repair":
         item = _item(state, args[0])
-        _require_unlocked_item(state, item)
         if item["condition"] >= 100:
             raise GameError("这件物品已是完美品相，无需修理。")
         if item["repairs"] >= 2:
@@ -566,7 +444,6 @@ def apply_command(state, command, args):
         _event(state, "repair", "工作台火花", text, item)
     elif command == "price":
         item = _item(state, args[0])
-        _require_unlocked_item(state, item)
         try:
             price = int(args[1])
         except (ValueError, TypeError) as exc:
@@ -577,10 +454,8 @@ def apply_command(state, command, args):
         _event(state, "price", "换上新价签", f"「{item['name']}」现在标价 {price} 星币。", item)
     elif command == "sell":
         item = _item(state, args[0])
-        if state["negotiation"]:
-            raise GameError("还有客人在等你的还价答复；请先 accept、decline 或 offer。")
         if item["last_sale_day"] == state["day"]:
-            raise GameError("这件物品今天已接待过买家；改价或换客人不能重掷，明天再试。")
+            raise GameError("这件物品今天已接待过买家；改价不会产生新买家，明天再试。")
         visitor = None
         if len(args) == 2:
             visitor = next((v for v in state["visitors"] if v["id"] == args[1].lower()), None)
@@ -590,65 +465,28 @@ def apply_command(state, command, args):
                 raise GameError("这位顾客今天已经接待过；明天再安排吧。")
         _spend(state, energy=1)
         item["last_sale_day"] = state["day"]
-        context = _trade_context(state, item, visitor)
-        roll = _trade_roll(state, rng, item, visitor, item["price"], context, "initial")
-        buyer = visitor["name"] if visitor else "旅客"
+        willingness = _actual_value(state, item) * rng.uniform(0.78, 1.28) * (1 + min(state["reputation"], 15) * 0.006)
+        willingness *= state["daily_event"]["sale_multiplier"] * (1 + 0.05 * state["upgrades"]["display"] + 0.05 * int(_has_set(state, "artifact")))
         if visitor:
+            willingness *= visitor["premium"] if item["kind"] == visitor["preferred_kind"] else 0.85
+            willingness *= 1.10 if item["condition"] >= visitor["min_condition"] else 0.85
+            willingness = min(willingness, visitor["budget"])
             visitor["status"] = "left"
-        if roll["success"]:
-            rep = _sale_settle(state, item, visitor, item["price"])
-            _event(state, "sale", "一见钟情 · 天然20！" if roll["face"] == 20 else "掷骰成交！",
-                   _roll_text(roll) + f" {buyer}买走「{item['name']}」，收入{item['price']}星币，口碑+{rep}。", item)
-        elif roll["face"] == 1:
-            _event(state, "sale", "天然1 · 客人告辞", _roll_text(roll), item)
-        else:
-            # A real, binding customer quote, not an exact budget disclosure.
-            offer = _counter_offer(context, item["price"])
-            state["negotiation"] = {"item_id": item["id"], "item_name": item["name"],
-                                    "customer_id": visitor["id"] if visitor else None, "customer_name": buyer,
-                                    "original_price": item["price"], "counter_offer": offer,
-                                    "day": state["day"], "context": context, "initial_roll_id": roll["id"]}
+        buyer = visitor["name"] if visitor else "旅客"
+        if item["price"] <= willingness:
+            state["credits"] += item["price"]
+            reputation = (2 if item["rarity"] == "legendary" else 1) + int(visitor is not None and item["kind"] == visitor["preferred_kind"])
+            state["reputation"] = min(99, state["reputation"] + reputation)
+            state["stats"]["sales_count"] += 1
+            state["stats"]["gross_earnings"] += item["price"]
+            state["inventory"].remove(item)
             if visitor:
-                visitor["status"] = "negotiating"
-            _event(state, "negotiation", "客人还了一个价", _roll_text(roll) +
-                   f" {buyer}愿出{offer}星币。可接受、谢绝，或花1精力作唯一一次最终报价。", item)
-        state["last_event"]["roll"] = copy.deepcopy(roll)
-    elif command in {"accept", "decline", "offer"}:
-        pending = state["negotiation"]
-        if pending is None or pending["item_id"] != args[0].upper():
-            raise GameError("这件货没有等待答复的还价；用 status 查看。")
-        item = _item(state, args[0])
-        visitor = next((v for v in state["visitors"] if v["id"] == pending["customer_id"]), None)
-        buyer = pending["customer_name"]
-        if command == "accept":
-            price = pending["counter_offer"]
-            _close_negotiation(state)
-            rep = _sale_settle(state, item, visitor, price)
-            _event(state, "sale", "就这个价 · 成交", f"接受{buyer}的{price}星币还价，卖出「{item['name']}」，口碑+{rep}。没有再掷骰或消耗精力。", item)
-        elif command == "decline":
-            _close_negotiation(state)
-            _event(state, "negotiation", "下回有缘", f"谢绝{buyer}的还价，「{item['name']}」留在货架；今日该货接待结束。", item)
+                visitor["status"] = "bought"
+            _event(state, "sale", "成交！", f"{buyer}买走了「{item['name']}」，收入{item['price']}星币，口碑+{reputation}。", item)
         else:
-            try:
-                price = int(args[1])
-            except (ValueError, TypeError) as exc:
-                raise GameError("最终报价必须是1至初次标价的整数。") from exc
-            if not 1 <= price <= pending["original_price"] or str(price) != args[1].strip():
-                raise GameError("最终报价必须是1至初次标价的整数；不能借还价抬高初次标价。")
-            _spend(state, energy=1)
-            roll = _trade_roll(state, rng, item, visitor, price, pending["context"], "final")
-            _close_negotiation(state)
-            item["price"] = price
-            if roll["success"]:
-                rep = _sale_settle(state, item, visitor, price)
-                _event(state, "sale", "最终报价 · 一见钟情！" if roll["face"] == 20 else "最终报价 · 成交！",
-                       _roll_text(roll) + f" {buyer}买走「{item['name']}」，收入{price}星币，口碑+{rep}。", item)
-            else:
-                _event(state, "sale", "最终报价 · 客人告辞", _roll_text(roll) + " 唯一一次还价已用，今天不能再出售这件货。", item)
-            state["last_event"]["roll"] = copy.deepcopy(roll)
+            _event(state, "sale", "买家摇了摇头", f"「{item['name']}」标价{item['price']}星币，{buyer}觉得超出这次的意愿或预算。今日接待机会已用。", item)
     elif command == "collect":
         item = _item(state, args[0])
-        _require_unlocked_item(state, item)
         if any(i["catalog_id"] == item["catalog_id"] for i in state["collection"]):
             raise GameError("收藏柜已有这个品种；请留给未来的买家。")
         had_set = _has_set(state, item["kind"])
@@ -677,10 +515,6 @@ def apply_command(state, command, args):
             text += "额外访客从明天开始到店。"
         _event(state, "upgrade", "小店焕新", text)
     elif command == "endday":
-        if state["negotiation"]:
-            pending = state["negotiation"]
-            state["log"].append({"day": state["day"], "text": f"闭店前自动谢绝{pending['customer_name']}对「{pending['item_name']}」的{pending['counter_offer']}星币还价。"})
-            _close_negotiation(state)
         old_day = state["day"]
         cost = _operating_cost(state)
         if state["credits"] < cost:
@@ -734,93 +568,10 @@ def _atomic_json(path, data):
             temporary.unlink()
 
 
-
-def _validate_trades(state):
-    def fail():
-        raise GameError("存档掷骰或还价记录损坏；请保留原文件，未重新掷骰。")
-    if not {"engine_upgrade", "negotiation", "roll_seq", "roll_history"} <= set(state):
-        fail()
-    upgrade = state.get("engine_upgrade")
-    if upgrade is not None and (not isinstance(upgrade, dict) or set(upgrade) != {"from_version", "source_day", "source_phase"}
-            or upgrade["from_version"] != 2 or type(upgrade["source_day"]) is not int
-            or not 1 <= upgrade["source_day"] <= state["day"] or upgrade["source_phase"] not in {"active", "week_summary", "lost"}):
-        fail()
-    sequence, history = state.get("roll_seq"), state.get("roll_history")
-    if type(sequence) is not int or sequence < 0 or not isinstance(history, list) or len(history) != min(sequence, 60):
-        fail()
-    keys = {"id", "day", "item_id", "item_name", "customer_id", "customer_name", "stage", "face", "modifier", "modifiers", "total", "target", "success", "outcome", "price", "explanation"}
-    def modifiers_valid(modifiers, total):
-        return (isinstance(modifiers, list) and len(modifiers) <= 7
-                and all(isinstance(m, dict) and set(m) == {"label", "value"} and isinstance(m["label"], str)
-                        and type(m["value"]) is int and -2 <= m["value"] <= 3 for m in modifiers)
-                and type(total) is int and total == sum(m["value"] for m in modifiers))
-    seen = {}
-    for index, row in enumerate(history):
-        if not isinstance(row, dict) or set(row) != keys:
-            fail()
-        for key, low, high in [("id", sequence - len(history) + index + 1, sequence - len(history) + index + 1),
-                               ("day", 1, state["day"]), ("face", 1, 20), ("target", 2, 99), ("price", 1, 9999)]:
-            if type(row[key]) is not int or not low <= row[key] <= high:
-                fail()
-        if (not all(isinstance(row[key], str) for key in ["item_id", "item_name", "customer_name", "explanation"])
-                or row["customer_id"] not in {None} | {p[0] for p in CUSTOMERS}
-                or row["stage"] not in {"initial", "final"} or not modifiers_valid(row["modifiers"], row["modifier"])
-                or type(row["total"]) is not int or row["total"] != row["face"] + row["modifier"]
-                or type(row["success"]) is not bool):
-            fail()
-        success = row["face"] == 20 or (row["face"] != 1 and row["total"] >= row["target"])
-        outcome = "miracle" if row["face"] == 20 else "fumble" if row["face"] == 1 else "success" if success else "failure"
-        if row["success"] != success or row["outcome"] != outcome:
-            fail()
-        pair = (row["day"], row["item_id"])
-        if pair in seen:
-            previous = seen[pair]
-            if (row["stage"] != "final" or previous["stage"] != "initial" or previous["outcome"] != "failure"
-                    or any(row[k] != previous[k] for k in ("customer_id", "customer_name", "item_name", "modifiers", "modifier"))
-                    or row["price"] > previous["price"]):
-                fail()
-        elif row["stage"] == "final" and not (index == 0 and sequence > 60):
-            fail()
-        seen[pair] = row
-    negotiating = [v for v in state["visitors"] if v["status"] == "negotiating"]
-    pending = state.get("negotiation")
-    if pending is None:
-        if negotiating:
-            fail()
-        return
-    pkeys = {"item_id", "item_name", "customer_id", "customer_name", "original_price", "counter_offer", "day", "context", "initial_roll_id"}
-    if not isinstance(pending, dict) or set(pending) != pkeys or state["phase"] != "active" or pending["day"] != state["day"]:
-        fail()
-    item = next((i for i in state["inventory"] if i["id"] == pending["item_id"]), None)
-    if (item is None or item["last_sale_day"] != state["day"] or pending["item_name"] != item["name"]
-            or type(pending["original_price"]) is not int or pending["original_price"] != item["price"]
-            or type(pending["counter_offer"]) is not int or not 1 <= pending["counter_offer"] <= item["price"]):
-        fail()
-    visitor = next((v for v in state["visitors"] if v["id"] == pending["customer_id"]), None)
-    if (pending["customer_id"] is not None and (visitor is None or negotiating != [visitor])
-            or pending["customer_id"] is None and negotiating
-            or pending["customer_name"] != (visitor["name"] if visitor else "旅客")):
-        fail()
-    context = pending["context"]
-    if (not isinstance(context, dict) or set(context) != {"reference", "budget", "modifiers", "modifier"}
-            or type(context["reference"]) not in (int, float) or not math.isfinite(context["reference"]) or context["reference"] <= 0
-            or not modifiers_valid(context["modifiers"], context["modifier"])
-            or context["budget"] != (visitor["budget"] if visitor else None)):
-        fail()
-    if (not history or history[-1]["id"] != pending["initial_roll_id"] or history[-1]["item_id"] != item["id"]
-            or history[-1]["stage"] != "initial" or history[-1]["outcome"] != "failure"
-            or any(history[-1][key] != pending[key] for key in ("day", "item_id", "item_name", "customer_id", "customer_name"))
-            or history[-1]["price"] != pending["original_price"]
-            or history[-1]["modifier"] != context["modifier"] or history[-1]["modifiers"] != context["modifiers"]
-            or history[-1]["target"] != _trade_target(context, pending["original_price"])
-            or context["reference"] != _actual_value(state, item)
-            or pending["counter_offer"] != _counter_offer(context, pending["original_price"])):
-        fail()
-
 def _validate_state(state):
     """Detect damaged/incompatible saves without silently resetting or rerolling."""
     if not isinstance(state, dict) or state.get("version") != VERSION:
-        raise GameError("不兼容或损坏的存档；请保留原文件。v1/v2存档需用 import-v1/import-v2 复制至全新路径。")
+        raise GameError("不兼容或损坏的存档；请保留原文件。v1存档需用 import-v1 复制至全新路径。")
     integers = {"revision": (0, 10**12), "day": (1, 10**12), "credits": (0, 10**12),
                 "energy": (0, 17), "reputation": (0, 99), "next_crate": (1, 10**12),
                 "next_item": (1, 10**12), "event_seq": (1, 10**12)}
@@ -856,7 +607,7 @@ def _validate_state(state):
         key, name, role, kind, condition, low, high = profiles[visitor["id"]]
         expected = (name, role, kind, condition, [low, high], 1.25, f"偏爱{KINDS[kind]}，品相{condition}%以上更喜欢")
         actual = tuple(visitor.get(k) for k in ("name", "role", "preferred_kind", "min_condition", "budget_range", "premium", "preference_label"))
-        if actual != expected or visitor.get("status") not in {"waiting", "bought", "left", "negotiating"} or type(visitor.get("budget")) is not int or not low <= visitor["budget"] <= high:
+        if actual != expected or visitor.get("status") not in {"waiting", "bought", "left"} or type(visitor.get("budget")) is not int or not low <= visitor["budget"] <= high:
             raise GameError("存档顾客偏好或预算损坏。")
     stats = state.get("stats")
     if not isinstance(stats, dict) or set(stats) != {"crates_opened", "sales_count", "gross_earnings", "days_traded"} or any(type(v) is not int or v < 0 for v in stats.values()):
@@ -921,9 +672,8 @@ def _validate_state(state):
         if not isinstance(row, dict) or type(row.get("day")) is not int or not 1 <= row["day"] <= state["day"] or not isinstance(row.get("text"), str):
             raise GameError("存档日志损坏。")
     event = state.get("last_event")
-    if not isinstance(event, dict) or event.get("seq") != state["event_seq"] or event.get("type") not in {"start", "buy", "reveal", "repair", "sale", "price", "day", "upgrade", "collect", "end", "import", "negotiation"} or not isinstance(event.get("title"), str) or not isinstance(event.get("text"), str):
+    if not isinstance(event, dict) or event.get("seq") != state["event_seq"] or event.get("type") not in {"start", "buy", "reveal", "repair", "sale", "price", "day", "upgrade", "collect", "end", "import"} or not isinstance(event.get("title"), str) or not isinstance(event.get("text"), str):
         raise GameError("存档事件损坏。")
-    _validate_trades(state)
     _rng(state)
 
 
@@ -937,7 +687,6 @@ def migrate_v1(source_bytes):
         raise GameError("旧版存档无法验证；原文件未改动。请提供完整v1 save.json，不能用公开observation代替。") from exc
     state = copy.deepcopy(original)
     state["version"] = VERSION
-    state.update(negotiation=None, roll_seq=0, roll_history=[], engine_upgrade=None)
     state["upgrades"]["display"] = 0
     state["daily_event"] = copy.deepcopy(EVENTS[0])
     # Deterministic import visitors, independent of the preserved game RNG.
@@ -959,22 +708,6 @@ def migrate_v1(source_bytes):
     _check_milestones(state)
     _event(state, "import", "旧店的灯还亮着", "旧版进度已复制导入，原文件保持不变。" +
            ("首周结算仍停在第7天；使用continue才会继续。" if state["phase"] == "week_summary" else "现金、物品、收藏与随机状态保留。"))
-    return state
-
-
-def migrate_v2(source_bytes):
-    """Read-only v2 upgrade; preserve resources, committed cargo and game RNG."""
-    import _legacy_v2
-    try:
-        original = json.loads(source_bytes)
-        _legacy_v2._validate_state(original)
-    except (ValueError, TypeError, KeyError, IndexError, OverflowError, _legacy_v2.GameError) as exc:
-        raise GameError("扩展版存档无法验证；原文件未改动。请提供完整v2 save.json，不能用公开observation代替。") from exc
-    state = copy.deepcopy(original)
-    state["daily_event"] = copy.deepcopy(next(e for e in EVENTS if e["id"] == original["daily_event"]["id"]))
-    state.update(version=VERSION, negotiation=None, roll_seq=0, roll_history=[],
-                 engine_upgrade={"from_version": 2, "source_day": original["day"], "source_phase": original["phase"]})
-    _event(state, "import", "骰子来到柜台", "扩展版进度已复制升级。原文件不变，现金、库存、收藏、顾客、当天已用接待与随机状态完整保留；未执行任何经营动作。")
     return state
 
 
@@ -1015,8 +748,7 @@ class GameStore:
         """Return only public data. Failed commands never change the save or RNG."""
         arity = {"new": 0, "status": 0, "market": 0, "buy": 1, "open": 1, "inspect": 1,
                  "repair": 1, "price": 2, "sell": (1, 2), "endday": 0, "upgrade": 1, "collect": 1, "restart": 1,
-                 "continue": 0, "codex": 0, "visitors": 0, "import-v1": 1, "import-v2": 1,
-                 "accept": 1, "decline": 1, "offer": 2}
+                 "continue": 0, "codex": 0, "visitors": 0, "import-v1": 1}
         if command not in arity:
             raise GameError(f"未知命令：{command}；运行 help 查看用法。")
         allowed = arity[command] if isinstance(arity[command], tuple) else (arity[command],)
@@ -1027,13 +759,13 @@ class GameStore:
                 if self.save_path.exists():
                     raise GameError("已有存档，new 不会重抽；继续 status，或明确 restart --confirm。")
                 state = new_state()
-            elif command in {"import-v1", "import-v2"}:
+            elif command == "import-v1":
                 source = Path(args[0]).expanduser().resolve()
                 if source in {self.save_path, self.observation_path}:
                     raise GameError("导入目标必须是新的路径，不能原地覆盖旧版存档。请使用 --save 新路径。")
                 if self.save_path.exists() or self.observation_path.exists():
                     raise GameError("目标存档或公开画面已存在；导入不会覆盖，请选全新 --save 路径。")
-                state = (migrate_v1 if command == "import-v1" else migrate_v2)(source.read_bytes())
+                state = migrate_v1(source.read_bytes())
             elif command == "restart":
                 if args != ("--confirm",):
                     raise GameError("重新开始会清空本局；确定后使用 restart --confirm。")

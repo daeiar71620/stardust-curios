@@ -114,7 +114,7 @@ class EngineTests(unittest.TestCase):
         obs = self.store.execute("status")
         def visit(node):
             if isinstance(node, dict):
-                self.assertTrue(set(node).isdisjoint({"rng", "base_value", "cargo", "catalog_id", "next_item", "next_crate"}))
+                self.assertTrue(set(node).isdisjoint({"rng", "base_value", "cargo", "catalog_id", "next_item", "next_crate", "budget"}))
                 for value in node.values():
                     visit(value)
             elif isinstance(node, list):
@@ -195,6 +195,8 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(public["credits"], before["credits"])
         self.assertNotEqual(self.load()["rng"], before["rng"])
         self.assert_rejected_unchanged("sell", item_id)
+        self.assert_rejected_unchanged("price", item_id, "1")
+        self.store.execute("decline", item_id)
         self.store.execute("price", item_id, "1")
         self.assert_rejected_unchanged("sell", item_id)
         self.store.execute("endday")
@@ -244,12 +246,16 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(state["upgrades"]["workbench"], 1)
         self.assertLess(self.store.execute("inspect", item_id)["repair_cost"], before)
         self.store.execute("upgrade", "workbench")
+        self.store.execute("upgrade", "workbench")
         self.assert_rejected_unchanged("upgrade", "workbench")
         state = self.store.execute("upgrade", "shelf")
         self.assertEqual((state["capacity"], state["max_energy"]), (10, 13))
         self.store.execute("endday")
         state = self.store.execute("upgrade", "shelf")
-        self.assertEqual((state["capacity"], state["max_energy"]), (13, 14))
+        self.assertEqual(state["capacity"], 13)
+        self.store.execute("endday")
+        state = self.store.execute("upgrade", "shelf")
+        self.assertEqual(state["capacity"], 16)
         self.assertIsNone(state["upgrade_costs"]["shelf"])
         self.assert_rejected_unchanged("upgrade", "shelf")
 
@@ -271,7 +277,8 @@ class EngineTests(unittest.TestCase):
         self.assert_rejected_unchanged("upgrade", "shelf")
         self.patch(credits=260, energy=0)
         self.assert_rejected_unchanged("buy", "curated")
-        self.assertEqual(self.store.execute("endday")["energy"], 12)
+        after = self.store.execute("endday")
+        self.assertEqual(after["energy"], after["max_energy"])
 
     def test_invalid_commands_parameters_and_ids(self):
         for command, args in [("unknown", []), ("buy", []), ("buy", ["fake"]), ("buy", ["salvage", "x"]),
@@ -293,17 +300,23 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(state["demand"], self.store.execute("status")["demand"])
         self.assertEqual(state["last_event"]["type"], "day")
 
-    def test_week_finishes_and_cannot_mutate_after_loss(self):
+    def test_week_finishes_and_requires_explicit_continue(self):
+        fees = 0
         for day in range(1, 8):
+            fees += self.store.execute("status")["operating_cost"]
             state = self.store.execute("endday")
             self.assertEqual(state["day"], min(day + 1, 7))
-        self.assertEqual(state["phase"], "lost")
-        self.assertEqual(state["credits"], 260 - 7 * 14)
+        self.assertEqual(state["phase"], "week_summary")
+        self.assertEqual(state["campaign"]["first_week_result"], "missed")
+        self.assertEqual(state["credits"], 260 - fees)
         self.assertEqual(state["last_event"]["type"], "end")
         for command, args in [("endday", []), ("buy", ["salvage"]), ("upgrade", ["shelf"])]:
             self.assert_rejected_unchanged(command, *args)
-        self.assertEqual(self.store.execute("status")["phase"], "lost")
-        self.assertEqual(self.store.execute("restart", "--confirm")["phase"], "active")
+        self.assertTrue(self.store.execute("status")["campaign"]["can_continue"])
+        after = self.store.execute("continue")
+        self.assertEqual((after["phase"], after["day"]), ("active", 8))
+        self.assertEqual(after["credits"], state["credits"])
+        self.assert_rejected_unchanged("continue")
 
     def test_bankruptcy_ends_without_negative_credits(self):
         self.patch(credits=13)
@@ -322,13 +335,14 @@ class EngineTests(unittest.TestCase):
         state.update(day=7, credits=664)
         engine._atomic_json(self.path, state)
         won = self.store.execute("endday")
-        self.assertEqual((won["phase"], won["credits"]), ("won", 650))
+        self.assertEqual((won["phase"], won["credits"]), ("week_summary", 650))
+        self.assertEqual(won["campaign"]["first_week_result"], "won")
         state.update(credits=663)
         engine._atomic_json(self.path, state)
-        self.assertEqual(self.store.execute("endday")["phase"], "lost")
+        self.assertEqual(self.store.execute("endday")["campaign"]["first_week_result"], "missed")
         state.update(credits=9999, collection=state["collection"][:1])
         engine._atomic_json(self.path, state)
-        self.assertEqual(self.store.execute("endday")["phase"], "lost")
+        self.assertEqual(self.store.execute("endday")["campaign"]["first_week_result"], "missed")
 
     def test_invalid_save_never_silently_resets(self):
         for content in ["broken JSON", "[]", '{"version":999}', '{"version":1}', 'null']:
