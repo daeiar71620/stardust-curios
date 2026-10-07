@@ -1,4 +1,4 @@
-"""v9 initial budget comfort curve. Synthetic fixtures only, never player saves."""
+"""v10 initial budget comfort curve. Synthetic fixtures only, never player saves."""
 import copy
 import json
 from pathlib import Path
@@ -65,7 +65,7 @@ class BudgetCurveTests(unittest.TestCase):
         context = self.context(); del context['budget']
         with self.assertRaises(engine.GameError):
             engine._initial_chance(context, 100)
-        for version in (None, True, 7, 8, 10, '9'):
+        for version in (None, True, 7, 8, 9, 11, '10'):
             with self.subTest(version=version), self.assertRaises(engine.GameError):
                 engine._initial_chance(self.context(), 100, version)
 
@@ -80,7 +80,7 @@ class BudgetCurveTests(unittest.TestCase):
             self.assertGreater(engine._initial_chance(context, budget+1), 1)
             engine.apply_command(state, 'sell', ['I001'] + ([visitor['id']] if visitor else []))
             self.assertEqual(state['roll_history'][-1]['outcome'], 'success')
-            self.assertEqual(state['roll_history'][-1]['rules_version'], 9)
+            self.assertEqual(state['roll_history'][-1]['rules_version'], engine.TRADE_RULES_VERSION)
             self.assertEqual(state['stats']['gross_earnings'], budget+1)
             engine._validate_state(state)
 
@@ -144,7 +144,7 @@ class BudgetCurveTests(unittest.TestCase):
                 self.assertNotIn('threshold', option); self.assertNotIn('probability', option)
 
     def test_repeat_json_reads_leave_private_bytes_and_rng_unchanged(self):
-        with tempfile.TemporaryDirectory(prefix='budget-v9-reads-') as tmp:
+        with tempfile.TemporaryDirectory(prefix='budget-v10-reads-') as tmp:
             store = engine.GameStore(Path(tmp)/'synthetic.json')
             engine._atomic_json(store.save_path, fixture(price=101))
             original = store.save_path.read_bytes()

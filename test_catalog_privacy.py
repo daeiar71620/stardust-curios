@@ -1,6 +1,6 @@
 """Catalog reveal boundary regressions. Only synthetic temporary saves are used.
 
-Current catalog discovery and artwork use native v9 save and trade rules.
+Current catalog discovery and artwork use native v10 save and trade rules.
 Buying a sealed crate fixes its cargo privately; only opening it reveals a type.
 """
 import copy

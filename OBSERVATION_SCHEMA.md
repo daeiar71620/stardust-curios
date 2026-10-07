@@ -1,20 +1,20 @@
-# Public observation schema, version 9 (standalone Python engine)
+# Public observation schema, version 10 (standalone Python engine)
 
 `engine.py` is the canonical runtime and persistence entry point. The optional `spectator.py` viewer and AI player consume its public output; no website or plugin is required.
 
-## V9 normal-budget contract
+## V10 normal-budget contract
 
-Save/protocol `version` and new transaction `rules_version` are 9. Both named buyers and ordinary travelers have a private daily normal budget: a spending-comfort input, not a hard ability-to-buy cap. Above that budget, initial success decays smoothly by the formula below; within budget, the prior initial probability is unchanged. 01 still succeeds at the legal price and 100 still fails. The public counter-eligibility ceiling remains hard, including `ask <= budget_range[1]`, reference, category and condition constraints. The exact public final-price formula is unchanged, with no second hidden-budget check.
+Save/protocol `version` and new transaction `rules_version` are 10. Both named buyers and ordinary travelers have a private daily normal budget: a spending-comfort input, not a hard ability-to-buy cap. Above that budget, initial success decays smoothly by the formula below; within budget, the prior initial probability is unchanged. 01 still succeeds at the legal price and 100 still fails. The public counter-eligibility ceiling remains hard, including `ask <= budget_range[1]`, reference, category and condition constraints. The exact public final-price formula is unchanged, with no second hidden-budget check.
 
 Public `budget_range` fields keep their established names and numeric ranges. They describe normal spending budgets. Do not expose the precise budget or invent an exact initial pre-roll probability from those ranges.
 
-Only native v9 state is supported. `migration`, `engine_upgrade`, `management_upgrade`, `collection_upgrade`, and `budget_upgrade` are required and always null. Any non-null or missing provenance field rejects the private state. They preserve the established public 39-field projection and cannot activate an upgrade path.
+Only native v10 state is supported. `migration`, `engine_upgrade`, `management_upgrade`, `collection_upgrade`, and `budget_upgrade` are required and always null. Any non-null or missing provenance field rejects the private state. They are rejection guards and cannot activate an upgrade path. The public v10 observation has 42 top-level fields, including the explicit protocol version, operating-cost breakdown, and last settlement.
 
 Old-version saves, previously migrated saves, mixed-rule histories and old-origin negotiations are unsupported. There are no import commands or frozen migration modules. Preserve existing files and explicitly use `new` at an unused path when a fresh game is wanted.
 
 ## Quality collection contract
 
-Quality requirements, cash/reputation/upgrade targets, base values, fees, budget ranges, dice and item limits use native v9 rules.
+Collection quality requirements, target amounts, values, budgets and dice retain their prior mechanics. V10 adds deadlines, recurring facility fees, and focused procurement; these apply only to new v10 saves.
 
 - Stage1: 2 distinct cabinet items at condition >=70
 - Stage2: 5 at >=75, across at least 3 qualified categories
@@ -39,7 +39,7 @@ The codex entry schema stays unchanged: only discovered entries contain identity
 
 The spectator and AI player consume only the public observation or CLI output. They must never open the private save. All actions go through `engine.py` / `GameStore.execute`.
 
-Native v9 uses two independent decimal D10s for a roll-low percentile result. These are simplified CoC-inspired house rules, not the complete official rules. Every retained roll and every pending negotiation has rules version 9.
+Native v10 uses two independent decimal D10s for a roll-low percentile result. These are simplified CoC-inspired house rules, not the complete official rules. Every retained roll and every pending negotiation has rules version 10.
 
 
 ## Public buyer capacity and counter eligibility
@@ -62,19 +62,19 @@ Each public item adds `public_reference` and `sale_options`. Reference is the ca
 
 ## Shop and campaign fields
 
-- `version`: 9
+- `version`: 10; `protocol_version`: 10
 - `revision`: monotonic integer for successful mutations; reads and previews do not increment it
 - `day`: ongoing day count; `total_days:7` is the introductory checkpoint, not a campaign cutoff
 - `credits`, `reputation`, `energy`, `max_energy`, `capacity`, `operating_cost`
 - `phase`: `active`, `week_summary` (paused after day 7), or `lost` (bankruptcy)
 - `goal`: introductory summary `{credits:650,collection:2}`
 - `inventory`, `collection`: public item arrays
-- `crates`: sealed `{id,supplier,name}` records only
+- `crates`: sealed `{id,supplier,name}` records; a focused crate also includes only the already-selected `requested_kind` and `requested_kind_label`, never its cargo identity, rarity, condition or value
 - Public item fields: `id,art_id,name,rarity,kind,color,condition,value_estimate:[low,high],repair_cost,price,origin,description,collected,sale_attempted_today,repair_attempted_today,repairs_remaining,negotiating`
-- `suppliers`: `[{id,name,cost,stock,description}]`; costs already reflect today's event
+- `suppliers`: `[{id,name,cost,stock,description,remaining,energy_cost,unlock_day,unlocked,daily_limit}]`; costs reflect today's event. Focused additionally includes `categories:[{id,name}]` using public category labels
 - `upgrades`: `{workbench:0..3,shelf:0..3,display:0..3}`
 - `upgrade_costs`: matching keys with the next price or null
-- `upgrade_details`: `[{id,name,level,max_level:3,next_cost,effect,next_effect}]`; `next_cost` and `next_effect` are null at maximum level
+- `upgrade_details`: `[{id,name,level,max_level:3,next_cost,effect,next_effect,daily_upkeep,daily_upkeep_from_day8,next_daily_upkeep,next_daily_upkeep_from_day8,upkeep_unlock_day}]`; next-level fields are null at maximum level. Day1–7 current upkeep is zero while future day8 costs remain visible
 - `demand`: `{label,kind,multiplier}`
 - `last_event`: `{seq,type,title,text,item}`; item is public or null. An event that performed a trade roll also contains `roll`, the complete corresponding public roll record. Non-roll events omit it
 - `log`: up to 60 recent `{day,text}` records
@@ -85,14 +85,16 @@ Each public item adds `public_reference` and `sale_options`. Reference is the ca
 - `stage_index`: number of earned milestones
 - `first_week_result`: `pending`, `won`, or `missed`; later completion does not rewrite it
 - `completed_milestones`: `[{id,title,day}]`
-- `next_milestone`: `{id,title,description,goals:[{key,label,current,target,met}],ready,min_condition,legacy_grace}`
+- `next_milestone`: `{id,title,description,goals:[{key,label,current,target,met}],ready,min_condition,legacy_grace,nominal_due_day,effective_due_day,unlocked_day,days_remaining,overdue_days,missed_day,overdue_surcharge}`. Intraday `ready` is progress, not an award; cash is tested after closing payment
+- `deadline_history`: activated stages in order, each `{id,title,nominal_due_day,effective_due_day,unlocked_day,missed_day,completed_day,status}`; status is `active`, `missed`, `completed`, or `completed_late`
+- `settlement_rule`: public explanation of payment-first settlement and non-stacking late fees
 - `can_continue`: true only in `week_summary`
 - `continue_command`: `continue` or null
 - `unlimited`: true
 
-`daily_event`: `{id,title,description,sale_multiplier,salvage_discount,repair_discount,cost_delta,energy_delta}`. Public event descriptions state current percentage-point bonuses. `sale_multiplier` is public metadata and is not an extra multiplier in native v9 trade calculations.
+`daily_event`: `{id,title,description,sale_multiplier,salvage_discount,repair_discount,cost_delta,energy_delta}`. Public event descriptions state current percentage-point bonuses. `sale_multiplier` is public metadata and is not an extra multiplier in native v10 trade calculations.
 
-`visitors`: `[{id,name,role,preferred_kind,preference_label,min_condition,budget_range:[low,high],premium,status,attempted_today}]`. Status is `waiting`, `negotiating`, `bought`, or `left`. Exact normal budget is private; its range is spending comfort, not a hard purchase cap. `premium` is public metadata and is not a native v9 calculation input; it is distinct from a final-roll record's relative price `premium`.
+`visitors`: `[{id,name,role,preferred_kind,preference_label,min_condition,budget_range:[low,high],premium,status,attempted_today}]`. Status is `waiting`, `negotiating`, `bought`, or `left`. Exact normal budget is private; its range is spending comfort, not a hard purchase cap. `premium` is public metadata and is not a native v10 calculation input; it is distinct from a final-roll record's relative price `premium`.
 
 `codex`: `{total,discovered,collected,entries:[...]}`. Unseen identities are withheld by the engine itself. Every entry has a stable, non-semantic 1-based `slot`:
 
@@ -103,7 +105,7 @@ Each public item adds `public_reference` and `sale_options`. Reference is the ca
 - Collection-set descriptions disclose category/count/perk only; they do not list unknown members
 - The viewer redacts undiscovered entries and refuses unsupported observation versions. Unknown illustrations are identical regardless of hidden kind, rarity or name
 
-Save/protocol `version` is 9. `status` refreshes a stale current-version public file without changing the private save. Sealed cargo remains private.
+Save `version` and public `protocol_version` are 10. `status` refreshes a stale current-version public file without changing the private save. Sealed cargo remains private.
 
 `collection_sets`: `[{id,name,description,required:3,current,completed,perk}]`. `current` counts distinct collected types of that kind.
 
@@ -111,14 +113,32 @@ Save/protocol `version` is 9. `status` refreshes a stale current-version public 
 
 Optional `persistence_warning`: a committed action or public-projection refresh encountered a filesystem synchronization/write problem. An already committed action remains successful; do not retry that action automatically. Once the filesystem is writable, `status` reconstructs the public projection.
 
-## Native v9 percentile roll records
+## Deadline, upkeep and settlement contract
+
+Nominal due days are 7,14,28,42, then56 and +14 for subsequent voyages. The first stage starts on day1 with due7. A newly unlocked later stage at closure day D has effective due `max(nominal_due_day,D+7)`. Completion and missed-deadline history are durable; missing or premature missed markers are rejected as corrupted state, never silently repaired; there is no loss merely for being late. Only inability to pay closing costs causes bankruptcy.
+
+The current active stage's surcharge is zero through day7; afterward it is `min(6,2*max(0,day-effective_due_day))`. Due-day closure has no late charge. Only one active stage contributes; completion clears its future charge and does not back-charge newly unlocked stages or create interest/debt. A missed deadline is recorded when a closing leaves the stage unfinished on its due date. Multiple already-qualified stages may complete at the same paid closure, each retaining its own history and next-stage grace.
+
+`operating_cost_breakdown` is `{base,event_delta,plant_discount,base_after_modifiers,facility_upkeep,facility_upkeep_from_day8,facility_upkeep_unlock_day,overdue_surcharge,total}`. Base is14; `base_after_modifiers=max(4,base+event_delta-plant_discount)`. Plant discount is0 or4. Current facility fees are zero before day8. From day8 choose one value for each facility's current level: workbench `[0,0,1,3]`, shelf `[0,1,2,4]`, display `[0,1,3,5]`; sum those values, not every past level. `total` equals modified base plus facility upkeep plus active overdue surcharge, and matches `operating_cost`.
+
+Closing automatically declines pending negotiation, freezes the shown cost, pays it once, then tests goals using post-payment cash, records any missed active deadline, and advances the day. Day7 pauses at `week_summary`; `continue` starts day8 without another payment. Ordinary intraday mutations and reads cannot award stages. Earned milestones are not revoked later.
+
+`last_settlement` is null initially, otherwise `{day,paid,breakdown,credits_after_payment}`. Breakdown is the exact historical charged/attempted quote, not recalculated with next-day weather or changed facilities. Bankruptcy records `paid:false` and zero remaining credits; it is not a successful charge or an accrued debt.
+
+## Focused procurement
+
+`buy focused KIND` unlocks on day8, costs155 credits and1 energy, and uses its own single daily stock. `KIND` is one of tool/artifact/bot/plant/signal. Other suppliers still require exactly one `buy` argument and retain their existing costs, stock and energy.
+
+The focused draw first uses curated rarity weights28/61/11, then chooses uniformly among items of the requested category and that rarity. Condition remains48–96. It does not prefer undiscovered IDs, promise a new entry, raise rare odds, or expose sealed outcomes. The category is chosen and cargo committed at purchase. Invalid arguments, unavailable stock, insufficient cash/energy, read operations, opening and process restart cannot replace that sealed draw.
+
+## Native v10 percentile roll records
 
 - `last_roll`: null before any rolls, otherwise the newest public record
 - `roll_history`: the latest 60 records, in chronological order; reads never add or reroll them
 - `last_event.roll`, when present, matches the latest history record
 - An acceptance or decline adds no roll. `last_roll` can therefore be historical; use `last_event` and `negotiation` for current transaction state and actual accepted-counteroffer income
 
-Every native v9 record has exactly these fields:
+Every native v10 record has exactly these fields:
 
 `{id,day,item_id,item_name,customer_id,customer_name,stage,die,tens,ones,roll,modifier,modifiers,threshold,probability,base_chance,premium,rules_version,counter_offer,success,outcome,price,explanation}`
 
@@ -134,14 +154,14 @@ Every native v9 record has exactly these fields:
 - `probability`: `threshold / 100`, the exact success probability for that committed roll, already including 01
 - `base_chance`: final base rate 1–99, or null for an initial roll
 - `premium`: `(price - counter_offer) / counter_offer` for a final roll, or null for an initial roll
-- `rules_version`: always 9
+- `rules_version`: always 10
 - `counter_offer`: the forfeited binding quote for a final roll, otherwise null
 - `success`: boolean
 - `outcome`: `miracle` for 01, `fumble` for 100, otherwise `success` or `failure`
 - `price`: the legal asking price for this roll. A later accepted quote has its own sale event/statistics; never use the earlier failed roll's asking price as accepted-sale revenue
 - `explanation`: public rule/result text
 
-There are no native v9 `face`, `total`, `target`, `base_target`, or `rejection_penalty` fields. Do not synthesize a D20 total or target from percentile records.
+There are no native v10 `face`, `total`, `target`, `base_target`, or `rejection_penalty` fields. Do not synthesize a D20 total or target from percentile records.
 
 ### Threshold formulas and privacy
 
@@ -191,8 +211,8 @@ Ordinary travelers get no category/condition-expectation components. Zero-valued
 
 `{item_id,item_name,customer_id,customer_name,original_price,counter_offer,rules_version,origin_rules_version,remaining_offers:1,final_offer_energy:1,final_offer_bounds:{min,max,available},accept_income,final_failure_income:0,preview,commands:{accept,decline,preview,offer}}`
 
-- Native v9 initial ordinary failures (02–99 above threshold) create a pending negotiation only when the public counter eligibility checks pass; otherwise the buyer leaves. 100 ends the meeting immediately; 01 succeeds immediately
-- `rules_version:9` governs the remaining final attempt. `origin_rules_version` is always 9
+- Native v10 initial ordinary failures (02–99 above threshold) create a pending negotiation only when the public counter eligibility checks pass; otherwise the buyer leaves. 100 ends the meeting immediately; 01 succeeds immediately
+- `rules_version:10` governs the remaining final attempt. `origin_rules_version` is always 10
 - `counter_offer` is one binding quote, not the exact private budget
 - Bounds are `min = counter_offer + 1`, `max = original_price - 1`, and `available = min <= max`
 - `accept ITEM`: settles the fixed quote with no energy cost and no dice
@@ -225,7 +245,7 @@ Preview fields:
 - `warning`: public risk explanation
 - `suggested`: true for the default candidate, false for an explicitly previewed candidate
 
-This is an exact final probability, not a range of hidden-input estimates. It uses only the public counteroffer and frozen public bonuses and exposes no new private reference/budget inputs. There are no `base_target_range`, `target_range`, `required_raw_range`, or `rejection_penalty` fields in the native v9 preview.
+This is an exact final probability, not a range of hidden-input estimates. It uses only the public counteroffer and frozen public bonuses and exposes no new private reference/budget inputs. There are no `base_target_range`, `target_range`, `required_raw_range`, or `rejection_penalty` fields in the native v10 preview.
 
 ## Trade rules object
 
@@ -246,7 +266,7 @@ This is an exact final probability, not a range of hidden-input estimates. It us
 - `endday`: automatically decline unfinished bargaining
 - `miracle_probability:0.01`
 
-The critical chance remains 1% per percentile check. A native v9 initial ask of 9999 fails counter eligibility and therefore receives no retry after ordinary failure: it has one 1% miracle chance. This deliberately retained high-price miracle is not an exploit-proof economic design.
+The critical chance remains 1% per percentile check. A native v10 initial ask of 9999 fails counter eligibility and therefore receives no retry after ordinary failure: it has one 1% miracle chance. This deliberately retained high-price miracle is not an exploit-proof economic design.
 
 ## CLI and privacy contract
 
@@ -262,4 +282,4 @@ The CLI has no action-ID deduplication or idempotency keys. File locking seriali
 
 Never expose `rng`, `base_value`, `cargo`, exact `budget`, private reference inputs, private serial counters, or private catalog IDs in public payloads. Public initial prices and value estimates use nominal catalog reference values, not the hidden per-item base roll. Public event/roll IDs are intentional identifiers, not private item/RNG counters. Diagnostic tools and deterministic tests may inspect synthetic fixtures; an AI playing an actual user game may not inspect private saves.
 
-Automated tests generate synthetic input in memory or temporary directories and clean it up afterward. Generated observations, playthroughs, screenshots and saves are not distributed. The optional source-to-source verification tool compares native v9 behavior with separately supplied public engine source; it never reads an existing game save.
+Automated tests generate synthetic input in memory or temporary directories and clean it up afterward. Generated observations, playthroughs, screenshots and saves are not distributed. The optional balance_audit.py uses an explicit public baseline source and predeclared synthetic seeds for paired policy comparisons; its policy reads only public observations, and it never reads an existing game save.

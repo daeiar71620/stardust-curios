@@ -229,7 +229,12 @@ class ManagementTests(unittest.TestCase):
         self.assertEqual(seen,set(range(1,101)))
 
     def test_economy_costs_prices_upgrades_match_current_release(self):
-        self.assertEqual(digest({key: getattr(engine, key) for key in ('CATALOG', 'SUPPLIERS', 'UPGRADE_RULES', 'EVENTS', 'SET_RULES', 'OPERATING_COST')}), '9372a42c36e8bdb123ad96c6daf88ee0eeab56fbdc067388d72aab5c86aa429b')
+        # The original first-week economy stays byte-for-byte equivalent. The
+        # additional day-eight supplier has its own public-contract tests.
+        original_economy = {key: getattr(engine, key) for key in
+                            ('CATALOG', 'UPGRADE_RULES', 'EVENTS', 'SET_RULES', 'OPERATING_COST')}
+        original_economy['SUPPLIERS'] = {key: engine.SUPPLIERS[key] for key in ('salvage', 'curated')}
+        self.assertEqual(digest(original_economy), '9372a42c36e8bdb123ad96c6daf88ee0eeab56fbdc067388d72aab5c86aa429b')
 
 
 

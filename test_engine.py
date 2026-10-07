@@ -132,7 +132,7 @@ class EngineTests(unittest.TestCase):
             self.store.execute("buy", "curated")
         self.assert_rejected_unchanged("buy", "curated")
         state = self.store.execute("market")
-        self.assertEqual([s["stock"] for s in state["suppliers"]], [0, 0])
+        self.assertEqual({s['id']: s['stock'] for s in state['suppliers']}, {'salvage': 0, 'curated': 0, 'focused': 0})
 
     def test_repair_consumes_money_and_energy_and_is_bounded(self):
         item_id = self.cargo()

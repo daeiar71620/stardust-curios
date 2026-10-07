@@ -1,4 +1,4 @@
-"""Independent native v9 management audit. Synthetic memory/TemporaryDirectory only.
+"""Independent native v10 management audit. Synthetic memory/TemporaryDirectory only.
 
 No default saves, personal play directories, backups, or external services are
 read. Fixed RNG seeds avoid searching for preferred outcomes.

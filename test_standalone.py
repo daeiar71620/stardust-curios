@@ -105,7 +105,7 @@ class StandaloneTests(unittest.TestCase):
         save = self.root / "private" / "captain.save.json"
         projection = save.with_name("captain.save.observation.json")
         opened_shop = self.public("new", save=save)
-        self.assertEqual(opened_shop["version"], 9)
+        self.assertEqual(opened_shop["version"], 10)
         self.assertEqual(opened_shop["day"], 1)
         self.assert_public_file(projection, opened_shop)
         status = self.public("status", save=save)

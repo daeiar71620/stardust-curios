@@ -20,8 +20,9 @@ import sys
 import tempfile
 from contextlib import contextmanager
 
-VERSION = 9
-TRADE_RULES_VERSION = 9
+VERSION = 10
+TRADE_RULES_VERSION = 10
+PROTOCOL_VERSION = 10
 WALKIN_DAILY_LIMIT = 1
 WALKIN_BUDGET_RANGE = (60, 120)
 WALKIN_MIN_CONDITION = 45
@@ -30,6 +31,18 @@ TOTAL_DAYS = 7
 DEFAULT_SAVE = Path(__file__).resolve().with_name("save.json")
 GOAL = {"credits": 650, "collection": 2}
 OPERATING_COST = 14
+LATER_RULES_START_DAY = 8
+FACILITY_UPKEEP = {"workbench": (0, 0, 1, 3), "shelf": (0, 1, 2, 4), "display": (0, 1, 3, 5)}
+OVERDUE_DAILY_RATE = 2
+OVERDUE_CAP = 6
+MILESTONE_DEADLINES = (7, 14, 28, 42)
+MILESTONE_GRACE_DAYS = 7
+VOYAGE_FIRST_DEADLINE = 56
+VOYAGE_DEADLINE_INTERVAL = 14
+FOCUSED_COST = 155
+FOCUSED_DAILY_LIMIT = 1
+FOCUSED_ENERGY_COST = 1
+FOCUSED_UNLOCK_DAY = 8
 KINDS = {"tool": "工具", "artifact": "奇物", "bot": "机器人", "plant": "植物", "signal": "信号"}
 RARITIES = {"common": "普通", "rare": "稀有", "legendary": "传说"}
 COLORS = {"common": "#8ed4cb", "rare": "#b7a2ff", "legendary": "#ffd17a"}
@@ -65,6 +78,8 @@ SUPPLIERS = {
                 "description": "平价漂流箱 · 普通 74% / 稀有 24% / 传说 2% · 品相 35–88"},
     "curated": {"id": "curated", "name": "夜航商队", "cost": 110, "stock": 2,
                 "description": "精选封存箱 · 普通 28% / 稀有 61% / 传说 11% · 品相 48–96"},
+    "focused": {"id": "focused", "name": "分类采购站", "cost": FOCUSED_COST, "stock": FOCUSED_DAILY_LIMIT,
+                "description": "第8天开放的分类封存箱 · 自选类别，普通 28% / 稀有 61% / 传说 11% · 品相 48–96 · 每日1箱"},
 }
 UPGRADE_RULES = {
     "workbench": {"name": "工作台", "costs": [70, 110, 260], "effects": ["基础修理：失手24%", "修理费减18%，失手14%", "修理费减36%，失手7%", "修理费减54%，失手3%"]},
@@ -107,6 +122,7 @@ HELP = """星屑杂货铺 · 七天首周，长期经营
 命令（python3 engine.py [--save 路径] 命令）：
   new / status / market / codex / visitors
   buy salvage|curated       购买已封存盲箱，1精力
+  buy focused KIND          第8天起分类采购，155星币、1精力、每日1箱；KIND为tool/artifact/bot/plant/signal
   open C001                 开箱，1精力
   inspect I001              查看公开估值，不改变运气
   repair I001               修理货架或收藏柜物品，2精力，每件最多2次、每天1次
@@ -125,6 +141,10 @@ HELP = """星屑杂货铺 · 七天首周，长期经营
   help                      查看命令
 
 24种货物、每日事件、偏好顾客、5种收藏套装和持续阶段目标。
+第8天起设施按当前等级收每日维护费；升级预览会显示今日与第8天起费用。
+阶段期限为第7/14/28/42天，长航第1章为第56天、之后每章加14天；新阶段至少有7个完整营业日。
+闭店先支付公开费用，再检查目标；未达期限不中断经营，次日起仅当前阶段每天加2星币、最多6星币。
+逾期费第8天起生效、不叠加欠债；达成后保留错过期限的记录，下一阶段重新计算期限。
 现金用于经营、修理、扩店；收藏不能直接卖出，可修理或用更好同款替换后出售旧件。
 品质主题为同类3种不同收藏且全部达到本阶段品相；普通套装收益不设品相门槛。顾客预算与成交价有不确定性。
 每天每件货物只有一场接待，最多初次与最终两骰；每位特邀顾客只接待一次。
@@ -186,15 +206,54 @@ def _max_energy(state):
 
 
 def _operating_cost(state):
-    return max(4, OPERATING_COST + state["daily_event"]["cost_delta"] - 4 * int(_has_set(state, "plant")))
+    return _operating_cost_breakdown(state)["total"]
+
+
+def _overdue_surcharge(state):
+    if state["day"] < LATER_RULES_START_DAY:
+        return 0
+    overdue_days = max(0, state["day"] - state["stage_history"][-1]["effective_due_day"])
+    return min(OVERDUE_CAP, OVERDUE_DAILY_RATE * overdue_days)
+
+
+def _operating_cost_breakdown(state):
+    event_delta = state["daily_event"]["cost_delta"]
+    plant_discount = 4 * int(_has_set(state, "plant"))
+    base_total = max(4, OPERATING_COST + event_delta - plant_discount)
+    future_upkeep = sum(FACILITY_UPKEEP[key][level] for key, level in state["upgrades"].items())
+    upkeep = future_upkeep if state["day"] >= LATER_RULES_START_DAY else 0
+    surcharge = _overdue_surcharge(state)
+    return {"base": OPERATING_COST, "event_delta": event_delta, "plant_discount": plant_discount,
+            "base_after_modifiers": base_total, "facility_upkeep": upkeep,
+            "facility_upkeep_from_day8": future_upkeep, "facility_upkeep_unlock_day": LATER_RULES_START_DAY,
+            "overdue_surcharge": surcharge, "total": base_total + upkeep + surcharge}
 
 
 def _supplier_cost(state, supplier):
+    if supplier == "focused":
+        return FOCUSED_COST
     return SUPPLIERS[supplier]["cost"] - (state["daily_event"]["salvage_discount"] if supplier == "salvage" else 0)
 
 
 def _stock_limit(state, supplier):
+    if supplier == "focused":
+        return FOCUSED_DAILY_LIMIT if state["day"] >= FOCUSED_UNLOCK_DAY else 0
     return SUPPLIERS[supplier]["stock"] + int(supplier == "salvage" and _has_set(state, "signal"))
+
+
+def _public_suppliers(state):
+    result = []
+    for key, info in SUPPLIERS.items():
+        focused = key == "focused"
+        row = dict(info, cost=_supplier_cost(state, key), stock=state["supplier_stock"][key],
+                   remaining=state["supplier_stock"][key], energy_cost=FOCUSED_ENERGY_COST if focused else 1,
+                   unlock_day=FOCUSED_UNLOCK_DAY if focused else 1,
+                   unlocked=not focused or state["day"] >= FOCUSED_UNLOCK_DAY,
+                   daily_limit=FOCUSED_DAILY_LIMIT if focused else _stock_limit(state, key))
+        if focused:
+            row["categories"] = [{"id": kind, "name": name} for kind, name in KINDS.items()]
+        result.append(row)
+    return result
 
 
 def _make_visitors(rng, state):
@@ -267,20 +326,44 @@ def _start_day(state, rng):
     state["walkins"] = _make_walkins(rng, state["day"])
 
 
-def _next_milestone(state):
-    completed = len(state["milestones"])
-    if completed < len(MILESTONES):
-        milestone = copy.deepcopy(MILESTONES[completed])
+def _milestone_definition(index):
+    if index < len(MILESTONES):
+        milestone = copy.deepcopy(MILESTONES[index])
+        nominal_due_day = MILESTONE_DEADLINES[index]
     else:
-        voyage = completed - len(MILESTONES) + 1
+        voyage = index - len(MILESTONES) + 1
         milestone = {"id": f"voyage_{voyage}", "title": f"星海长航 · 第{voyage}章",
             "description": "长期经营继续；收藏数量上限24种、品相上限90%、品质主题上限5套，现金与口碑目标延续原规则。",
             "min_condition": min(90, 85 + voyage),
             "targets": {"credits": 5000 + 3000 * voyage, "collection": min(len(CATALOG), 15 + 2 * voyage),
                         "reputation": min(99, 40 + 10 * voyage), "collection_categories": 5,
                         "quality_themes": min(5, 3 + voyage)}}
+        nominal_due_day = VOYAGE_FIRST_DEADLINE + (voyage - 1) * VOYAGE_DEADLINE_INTERVAL
+    milestone["nominal_due_day"] = nominal_due_day
     milestone["legacy_grace"] = False
     return milestone
+
+
+def _new_stage_record(index, unlocked_day):
+    milestone = _milestone_definition(index)
+    due = milestone["nominal_due_day"]
+    return {"id": milestone["id"], "title": milestone["title"], "nominal_due_day": due,
+            "effective_due_day": due if index == 0 else max(due, unlocked_day + MILESTONE_GRACE_DAYS),
+            "unlocked_day": unlocked_day, "missed_day": None, "completed_day": None}
+
+
+def _next_milestone(state):
+    milestone = _milestone_definition(len(state["milestones"]))
+    milestone.update(state["stage_history"][-1])
+    return milestone
+
+
+def _record_missed_deadline(state):
+    stage = state["stage_history"][-1]
+    if stage["missed_day"] is None and state["day"] >= stage["effective_due_day"]:
+        stage["missed_day"] = stage["effective_due_day"]
+        state["log"].append({"day": state["day"], "text": f"阶段期限未达成：{stage['title']}（第{stage['effective_due_day']}天）。仍可继续经营并补齐；次日起仅当前阶段收取封顶逾期费。"})
+        state["log"] = state["log"][-60:]
 
 
 def _quality_counts(state, minimum):
@@ -360,15 +443,18 @@ def _public_replacement(state, item):
 
 
 def _check_milestones(state):
+    """Settle earned stages using cash after today's one maintenance payment."""
     if state["first_week_result"] == "pending" or state["phase"] == "lost":
         return
     # No random rewards or free cash: earned titles persist without a reroll opportunity.
-    for _ in range(len(MILESTONES) + 1):
+    while True:
         milestone = _next_milestone(state)
         values = _goal_values(state, milestone)
         if not all(values[key] >= target for key, target in milestone["targets"].items()):
             break
         state["milestones"].append({"id": milestone["id"], "title": milestone["title"], "day": state["day"]})
+        state["stage_history"][-1]["completed_day"] = state["day"]
+        state["stage_history"].append(_new_stage_record(len(state["milestones"]), state["day"]))
         state["log"].append({"day": state["day"], "text": f"阶段达成：{milestone['title']}。新的长期目标已开启。"})
         state["log"] = state["log"][-60:]
 
@@ -380,15 +466,17 @@ def new_state(seed=None):
         "version": VERSION, "revision": 0, "day": 1, "credits": 260, "reputation": 0,
         "energy": 12, "phase": "active", "inventory": [], "crates": [], "collection": [],
         "upgrades": {"workbench": 0, "shelf": 0, "display": 0}, "demand": _daily_demand(rng),
-        "supplier_stock": {key: val["stock"] for key, val in SUPPLIERS.items()},
+        "supplier_stock": {},
         "next_crate": 1, "next_item": 1, "event_seq": 0, "last_event": None, "log": [],
         "daily_event": copy.deepcopy(EVENTS[0]), "visitors": [], "discovered": [],
         "first_week_result": "pending", "milestones": [],
+        "stage_history": [_new_stage_record(0, 1)], "last_settlement": None,
         "stats": {"crates_opened": 0, "sales_count": 0, "gross_earnings": 0, "days_traded": 0},
         "migration": None, "engine_upgrade": None, "management_upgrade": None, "collection_upgrade": None,
         "budget_upgrade": None,
         "negotiation": None, "roll_seq": 0, "roll_history": [],
     }
+    state["supplier_stock"] = {key: _stock_limit(state, key) for key in SUPPLIERS}
     state["visitors"] = _make_visitors(rng, state)
     state["walkins"] = _make_walkins(rng, state["day"])
     state["rng"] = rng.getstate()
@@ -440,10 +528,20 @@ def _public_campaign(state):
               "reputation": "口碑", "upgrades": "设施总等级", "collection_categories": "合格类别", "quality_themes": "品质主题"}
     goals = [{"key": key, "label": labels[key], "current": values[key], "target": target, "met": values[key] >= target}
              for key, target in milestone["targets"].items()]
+    deadline = {key: milestone[key] for key in ("nominal_due_day", "effective_due_day", "unlocked_day", "missed_day")}
+    deadline.update(days_remaining=max(0, milestone["effective_due_day"] - state["day"]),
+                    overdue_days=max(0, state["day"] - milestone["effective_due_day"]),
+                    overdue_surcharge=_overdue_surcharge(state))
+    history = []
+    for stage in state["stage_history"]:
+        status = ("completed_late" if stage["missed_day"] is not None else "completed") if stage["completed_day"] is not None else ("missed" if stage["missed_day"] is not None else "active")
+        history.append(dict(stage, status=status))
     return {"title": "七天首周" if state["first_week_result"] == "pending" else "星港长期经营",
             "stage_index": len(state["milestones"]), "first_week_result": state["first_week_result"],
             "completed_milestones": copy.deepcopy(state["milestones"]),
-            "next_milestone": {key: milestone[key] for key in ("id", "title", "description")} | {"goals": goals, "ready": all(g["met"] for g in goals), "min_condition": milestone["min_condition"], "legacy_grace": milestone["legacy_grace"]},
+            "next_milestone": {key: milestone[key] for key in ("id", "title", "description")} | {"goals": goals, "ready": all(g["met"] for g in goals), "min_condition": milestone["min_condition"], "legacy_grace": milestone["legacy_grace"]} | deadline,
+            "deadline_history": history,
+            "settlement_rule": "闭店先支付当日费用，再用扣费后现金检查目标；错过期限可继续，逾期费仅当前阶段生效，不累积欠债。",
             "can_continue": state["phase"] == "week_summary", "continue_command": "continue" if state["phase"] == "week_summary" else None,
             "unlimited": True}
 
@@ -452,8 +550,14 @@ def _public_upgrades(state):
     result = []
     for key, rule in UPGRADE_RULES.items():
         level = state["upgrades"][key]
+        future_upkeep = FACILITY_UPKEEP[key][level]
+        next_upkeep = FACILITY_UPKEEP[key][level + 1] if level < 3 else None
         result.append({"id": key, "name": rule["name"], "level": level, "max_level": 3,
                        "next_cost": rule["costs"][level] if level < 3 else None,
+                       "daily_upkeep": future_upkeep if state["day"] >= LATER_RULES_START_DAY else 0,
+                       "daily_upkeep_from_day8": future_upkeep,
+                       "next_daily_upkeep": (next_upkeep if state["day"] >= LATER_RULES_START_DAY else 0) if level < 3 else None,
+                       "next_daily_upkeep_from_day8": next_upkeep, "upkeep_unlock_day": LATER_RULES_START_DAY,
                        "effect": rule["effects"][level], "next_effect": rule["effects"][level + 1] if level < 3 else None})
     return result
 
@@ -481,16 +585,19 @@ def _public_item(state, item):
 def observation(state):
     upgrades = _public_upgrades(state)
     return {
-        "version": VERSION, "revision": state["revision"], "day": state["day"], "total_days": TOTAL_DAYS,
+        "version": VERSION, "protocol_version": PROTOCOL_VERSION, "revision": state["revision"], "day": state["day"], "total_days": TOTAL_DAYS,
         "credits": state["credits"], "reputation": state["reputation"], "energy": state["energy"],
         "max_energy": _max_energy(state), "goal": GOAL.copy(), "phase": state["phase"],
         "inventory": [_public_item(state, item) for item in state["inventory"]],
-        "crates": [{"id": crate["id"], "supplier": crate["supplier"], "name": crate["name"]} for crate in state["crates"]],
+        "crates": [{"id": crate["id"], "supplier": crate["supplier"], "name": crate["name"]}
+                   | ({"requested_kind": crate["requested_kind"], "requested_kind_label": KINDS[crate["requested_kind"]]}
+                      if crate["supplier"] == "focused" else {}) for crate in state["crates"]],
         "collection": [_public_item(state, item) for item in state["collection"]],
-        "suppliers": [dict(info, cost=_supplier_cost(state, key), stock=state["supplier_stock"][key]) for key, info in SUPPLIERS.items()],
+        "suppliers": _public_suppliers(state),
         "upgrades": copy.deepcopy(state["upgrades"]), "demand": copy.deepcopy(state["demand"]),
         "last_event": copy.deepcopy(state["last_event"]), "log": copy.deepcopy(state["log"]),
         "capacity": _capacity(state), "operating_cost": _operating_cost(state),
+        "operating_cost_breakdown": _operating_cost_breakdown(state), "last_settlement": copy.deepcopy(state["last_settlement"]),
         "upgrade_costs": {row["id"]: row["next_cost"] for row in upgrades}, "upgrade_details": upgrades,
         "campaign": _public_campaign(state), "collection_progress": _public_collection_progress(state), "daily_event": copy.deepcopy(state["daily_event"]),
         "visitors": _public_visitors(state), "walkins": _public_walkins(state), "codex": _public_codex(state),
@@ -505,7 +612,7 @@ def observation(state):
         "negotiation": _public_negotiation(state),
         "last_roll": copy.deepcopy(state["roll_history"][-1]) if state["roll_history"] else None,
         "roll_history": copy.deepcopy(state["roll_history"]),
-        "trade_rules": {"die": "D100", "dice": ["D10 tens 00–90", "D10 ones 0–9"],
+        "trade_rules": {"version": TRADE_RULES_VERSION, "die": "D100", "dice": ["D10 tens 00–90", "D10 ones 0–9"],
                         "direction": "roll_low", "zero_zero": 100,
                         "critical": 1, "fumble": 100,
                         "critical_rule": "01一见钟情，突破普通意愿和预算，按合法报价成交",
@@ -545,9 +652,9 @@ def _item(state, item_id):
     raise GameError(f"货架上没有物品 {item_id}；柜中物品不能直接出售或改价，可用 repair 修理，或用更好同款 replace-collection。")
 
 
-def _make_cargo(rng, supplier):
+def _make_cargo(rng, supplier, requested_kind=None):
     rarity = rng.choices(["common", "rare", "legendary"], weights=[74, 24, 2] if supplier == "salvage" else [28, 61, 11])[0]
-    entry = rng.choice([e for e in CATALOG if e[2] == rarity])
+    entry = rng.choice([e for e in CATALOG if e[2] == rarity and (requested_kind is None or e[3] == requested_kind)])
     catalog_id, name, rarity, kind, base, description = entry
     return {"catalog_id": catalog_id, "name": name, "rarity": rarity, "kind": kind,
             "base_value": round(base * rng.uniform(0.92, 1.08)),
@@ -723,21 +830,31 @@ def apply_command(state, command, args):
         _start_day(state, rng)
         _event(state, "day", "第8天 · 故事继续", "保留全部现金、库存、收藏与设施，开始长期经营。首周维护费不会重复扣除。")
         state["rng"] = rng.getstate()
-        _check_milestones(state)
         return
     _require_active(state)
     if command == "buy":
         supplier = args[0]
         if supplier not in SUPPLIERS:
-            raise GameError("未知供应商；请选择 salvage 或 curated。")
+            raise GameError("未知供应商；请选择 salvage、curated 或 focused KIND。")
+        focused = supplier == "focused"
+        if len(args) != (2 if focused else 1):
+            raise GameError("分类采购需要 buy focused KIND；普通采购只能用 buy salvage 或 buy curated。")
+        requested_kind = args[1] if focused else None
+        if focused and requested_kind not in KINDS:
+            raise GameError("分类采购类别为 tool、artifact、bot、plant 或 signal。")
+        if focused and state["day"] < FOCUSED_UNLOCK_DAY:
+            raise GameError(f"分类采购从第{FOCUSED_UNLOCK_DAY}天开放。")
         if state["supplier_stock"][supplier] <= 0:
             raise GameError("这位供应商今天已售罄，明天会补货。")
         if len(state["inventory"]) + len(state["crates"]) >= _capacity(state):
             raise GameError("货架已满；出售、收藏物品，或升级 shelf 后再采购。")
-        _spend(state, energy=1, credits=_supplier_cost(state, supplier))
+        _spend(state, energy=FOCUSED_ENERGY_COST if focused else 1, credits=_supplier_cost(state, supplier))
         # All hidden cargo properties are committed now, before the box is opened.
         crate = {"id": f"C{state['next_crate']:03d}", "supplier": supplier,
-                 "name": "漂流回收箱" if supplier == "salvage" else "夜航封存箱", "cargo": _make_cargo(rng, supplier)}
+                 "name": f"{KINDS[requested_kind]}分类封存箱" if focused else ("漂流回收箱" if supplier == "salvage" else "夜航封存箱"),
+                 "cargo": _make_cargo(rng, supplier, requested_kind)}
+        if focused:
+            crate["requested_kind"] = requested_kind
         state["next_crate"] += 1
         state["supplier_stock"][supplier] -= 1
         state["crates"].append(crate)
@@ -916,6 +1033,9 @@ def apply_command(state, command, args):
         if which == "shelf":
             state["energy"] += 1
         text = f"花费{cost}星币升级{rule['name']}至Lv.{level + 1}：{rule['effects'][level + 1]}。"
+        future_upkeep = FACILITY_UPKEEP[which][level + 1]
+        current_upkeep = future_upkeep if state["day"] >= LATER_RULES_START_DAY else 0
+        text += f"此设施每日维护费：今日{current_upkeep}星币，第{LATER_RULES_START_DAY}天起{future_upkeep}星币；今日闭店总费用{_operating_cost(state)}星币。"
         if which == "display" and level == 1:
             text += "额外访客从明天开始到店。"
         _event(state, "upgrade", "小店焕新", text)
@@ -925,32 +1045,39 @@ def apply_command(state, command, args):
             state["log"].append({"day": state["day"], "text": f"闭店前自动谢绝{pending['customer_name']}对「{pending['item_name']}」的{pending['counter_offer']}星币还价。"})
             _close_negotiation(state)
         old_day = state["day"]
-        cost = _operating_cost(state)
+        breakdown = _operating_cost_breakdown(state)
+        cost = breakdown["total"]
         if state["credits"] < cost:
             state["credits"] = 0
             state["phase"] = "lost"
+            state["last_settlement"] = {"day": old_day, "paid": False, "breakdown": breakdown, "credits_after_payment": 0}
+            _record_missed_deadline(state)
             _event(state, "end", "灯光暂时熄灭", f"第{old_day}天闭店无法支付{cost}星币维护费。本局结束，你的收藏仍留在这里。")
         else:
             state["credits"] -= cost
             state["stats"]["days_traded"] += 1
+            state["last_settlement"] = {"day": old_day, "paid": True, "breakdown": breakdown, "credits_after_payment": state["credits"]}
             if old_day == TOTAL_DAYS and state["first_week_result"] == "pending":
                 first_goal = _next_milestone(state)
                 values = _goal_values(state, first_goal)
                 won = all(values[key] >= target for key, target in first_goal["targets"].items())
                 state["first_week_result"] = "won" if won else "missed"
                 state["phase"] = "week_summary"
+                _check_milestones(state)
+                _record_missed_deadline(state)
                 _event(state, "end", "首周达成 · 星港为你亮灯" if won else "首周结算 · 故事仍在继续",
                        f"支付{cost}星币维护费后，留下{state['credits']}星币、{len(state['collection'])}种个人珍藏，其中{values['collection']}种计入本阶段目标。"
                        + ("首周目标达成！" if won else "首周目标尚未达成，可以继续经营后补齐。")
                        + "使用continue明确进入第8天；所有进度保留。")
             else:
+                _check_milestones(state)
+                _record_missed_deadline(state)
                 _start_day(state, rng)
                 _event(state, "day", f"第{state['day']}天 · {state['daily_event']['title']}",
                        f"支付{cost}星币维护费，恢复精力并补货。{state['daily_event']['description']} 今日{state['demand']['label']}。")
     else:
         raise GameError(f"未知命令：{command}")
     state["rng"] = rng.getstate()
-    _check_milestones(state)
 
 
 def _atomic_json(path, data):
@@ -1109,7 +1236,7 @@ def _validate_trades(state):
 def _validate_state(state):
     """Detect damaged/incompatible saves without silently resetting or rerolling."""
     if not isinstance(state, dict) or type(state.get("version")) is not int or state["version"] != VERSION:
-        raise GameError("只支持原生v9新档；旧版、迁移档或损坏的存档不受支持。请保留原文件，使用全新路径运行new。")
+        raise GameError("只支持原生v10新档；v9、其他旧版、迁移档或损坏的存档不受支持。请保留原文件，使用全新路径运行new。")
     integers = {"revision": (0, 10**12), "day": (1, 10**12), "credits": (0, 10**12),
                 "energy": (0, 17), "reputation": (0, 99), "next_crate": (1, 10**12),
                 "next_item": (1, 10**12), "event_seq": (1, 10**12)}
@@ -1155,12 +1282,59 @@ def _validate_state(state):
         raise GameError("存档阶段目标损坏。")
     for index, row in enumerate(milestones):
         expected = MILESTONES[index] if index < len(MILESTONES) else {"id": f"voyage_{index - len(MILESTONES) + 1}", "title": f"星海长航 · 第{index - len(MILESTONES) + 1}章"}
-        if not isinstance(row, dict) or row.get("id") != expected["id"] or row.get("title") != expected["title"] or type(row.get("day")) is not int or not 7 <= row["day"] <= state["day"]:
+        if not isinstance(row, dict) or set(row) != {"id", "title", "day"} or row.get("id") != expected["id"] or row.get("title") != expected["title"] or type(row.get("day")) is not int or not 7 <= row["day"] <= state["day"]:
             raise GameError("存档阶段履历损坏。")
+    history = state.get("stage_history")
+    if not isinstance(history, list) or len(history) != len(milestones) + 1:
+        raise GameError("存档阶段期限履历损坏。")
+    for index, row in enumerate(history):
+        unlocked = 1 if index == 0 else milestones[index - 1]["day"]
+        expected = _new_stage_record(index, unlocked)
+        if not isinstance(row, dict) or set(row) != set(expected):
+            raise GameError("存档阶段期限字段损坏。")
+        if any(type(row[key]) is not type(expected[key]) or row[key] != expected[key]
+               for key in ("id", "title", "nominal_due_day", "effective_due_day", "unlocked_day")):
+            raise GameError("存档阶段期限或解锁日期损坏。")
+        completed = milestones[index]["day"] if index < len(milestones) else None
+        if type(row["completed_day"]) is not type(completed) or row["completed_day"] != completed:
+            raise GameError("存档阶段达成日期损坏。")
+        if completed is not None and completed < unlocked:
+            raise GameError("存档阶段顺序损坏。")
+        missed = row["missed_day"]
+        due = row["effective_due_day"]
+        closed_through = state["day"] - 1 if state["phase"] == "active" else state["day"]
+        must_have_missed = completed > due if completed is not None else closed_through >= due
+        expected_missed = due if must_have_missed else None
+        if type(missed) is not type(expected_missed) or missed != expected_missed:
+            raise GameError("存档错过期限记录损坏。")
+    if "last_settlement" not in state:
+        raise GameError("存档闭店结算字段缺失。")
+    settlement = state["last_settlement"]
+    if settlement is not None:
+        if (not isinstance(settlement, dict) or set(settlement) != {"day", "paid", "breakdown", "credits_after_payment"}
+                or type(settlement["day"]) is not int or not 1 <= settlement["day"] <= state["day"]
+                or type(settlement["paid"]) is not bool
+                or type(settlement["credits_after_payment"]) is not int or not 0 <= settlement["credits_after_payment"] <= 10**12):
+            raise GameError("存档闭店结算记录损坏。")
+        fees = settlement["breakdown"]
+        fields = {"base", "event_delta", "plant_discount", "base_after_modifiers", "facility_upkeep",
+                  "facility_upkeep_from_day8", "facility_upkeep_unlock_day", "overdue_surcharge", "total"}
+        if (not isinstance(fees, dict) or set(fees) != fields or any(type(value) is not int for value in fees.values())
+                or fees["base"] != OPERATING_COST or fees["event_delta"] not in {e["cost_delta"] for e in EVENTS}
+                or fees["plant_discount"] not in (0, 4)
+                or fees["base_after_modifiers"] != max(4, fees["base"] + fees["event_delta"] - fees["plant_discount"])
+                or not 0 <= fees["facility_upkeep_from_day8"] <= sum(max(values) for values in FACILITY_UPKEEP.values())
+                or fees["facility_upkeep_unlock_day"] != LATER_RULES_START_DAY
+                or fees["facility_upkeep"] != (fees["facility_upkeep_from_day8"] if settlement["day"] >= LATER_RULES_START_DAY else 0)
+                or not 0 <= fees["overdue_surcharge"] <= OVERDUE_CAP
+                or (settlement["day"] < LATER_RULES_START_DAY and fees["overdue_surcharge"] != 0)
+                or fees["total"] != fees["base_after_modifiers"] + fees["facility_upkeep"] + fees["overdue_surcharge"]
+                or (not settlement["paid"] and (state["phase"] != "lost" or settlement["credits_after_payment"] != 0))):
+            raise GameError("存档闭店费用明细损坏。")
     # Preserve the public schema while explicitly refusing migrated state.
     for key in ("migration", "engine_upgrade", "management_upgrade", "collection_upgrade", "budget_upgrade"):
         if key not in state or state[key] is not None:
-            raise GameError("只支持原生v9新档；不支持旧档或迁移记录，请使用全新路径运行new。")
+            raise GameError("只支持原生v10新档；不支持v9旧档或迁移记录，请使用全新路径运行new。")
     if not isinstance(state.get("collection"), list):
         raise GameError("存档收藏损坏。")
     if state["energy"] > _max_energy(state):
@@ -1207,6 +1381,13 @@ def _validate_state(state):
             raise GameError("存档盲箱损坏。")
         ids.add(crate["id"])
         validate_item(crate.get("cargo"), cargo=True)
+        if crate["supplier"] == "focused":
+            if (crate.get("requested_kind") not in KINDS or crate["cargo"]["kind"] != crate["requested_kind"]
+                    or state["day"] < FOCUSED_UNLOCK_DAY
+                    or crate["name"] != f"{KINDS[crate['requested_kind']]}分类封存箱"):
+                raise GameError("存档分类采购封存箱损坏。")
+        elif "requested_kind" in crate:
+            raise GameError("普通封存箱不能带分类采购记录。")
     for row in state["log"]:
         if not isinstance(row, dict) or type(row.get("day")) is not int or not 1 <= row["day"] <= state["day"] or not isinstance(row.get("text"), str):
             raise GameError("存档日志损坏。")
@@ -1252,7 +1433,7 @@ class GameStore:
 
     def execute(self, command, *args):
         """Return only public data. Failed commands never change the save or RNG."""
-        arity = {"new": 0, "status": 0, "market": 0, "buy": 1, "open": 1, "inspect": 1,
+        arity = {"new": 0, "status": 0, "market": 0, "buy": (1, 2), "open": 1, "inspect": 1,
                  "repair": 1, "price": 2, "sell": (1, 2), "endday": 0, "upgrade": 1, "collect": 1, "replace-collection": 1, "restart": 1,
                  "continue": 0, "codex": 0, "visitors": 0, "preview-offer": 2,
                  "accept": 1, "decline": 1, "offer": 2}
@@ -1290,7 +1471,7 @@ class GameStore:
                         price = _final_price(pending, args[1])
                         public["negotiation"]["preview"] = dict(_offer_forecast(state, pending, price), suggested=False)
                     elif command == "market":
-                        result = {k: public[k] for k in ["revision", "day", "credits", "energy", "demand", "suppliers", "daily_event", "visitors", "walkins", "operating_cost"]}
+                        result = {k: public[k] for k in ["revision", "day", "credits", "energy", "demand", "suppliers", "daily_event", "visitors", "walkins", "operating_cost", "operating_cost_breakdown", "last_settlement"]}
                     elif command in {"codex", "visitors"}:
                         result = public[command] if command == "codex" else {"day": public["day"], "visitors": public["visitors"], "walkins": public["walkins"]}
                     elif command == "inspect":

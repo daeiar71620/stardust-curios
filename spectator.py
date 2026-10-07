@@ -68,7 +68,9 @@ def as_list(value):
 
 def native_observation(value):
     source = as_dict(value)
-    return (type(source.get('version')) is int and source['version'] == 9
+    return (type(source.get('version')) is int and source['version'] == 10
+            and type(source.get('protocol_version', 10)) is int
+            and source.get('protocol_version', 10) == 10
             and all(source.get(key) is None for key in
                     ('migration', 'engine_upgrade', 'management_upgrade', 'collection_upgrade', 'budget_upgrade'))
             and (as_dict(source.get('collection_progress')).get('legacy_grace') is None
@@ -86,9 +88,9 @@ def safe_color(value, fallback=TEAL):
 
 
 def percentile_rules(value):
-    """Only native v9 records may use the current percentile renderer."""
+    """Only native v10 records may use the current percentile renderer."""
     source = as_dict(value)
-    return (type(source.get('rules_version')) is int and source['rules_version'] == 9
+    return (type(source.get('rules_version')) is int and source['rules_version'] == 10
             and source.get('die') in (None, 'D100'))
 
 
@@ -98,6 +100,95 @@ def public_integer(value, low, high, step=1):
         return None
     result = int(result)
     return result if low <= result <= high and (result-low) % step == 0 else None
+
+
+def public_cost_breakdown(value):
+    """Keep the published invoice, never reconstruct payable totals in the UI."""
+    source = as_dict(value)
+    if not source:
+        return {}
+    fields = ('base', 'plant_discount', 'base_after_modifiers', 'facility_upkeep',
+              'facility_upkeep_from_day8', 'facility_upkeep_unlock_day',
+              'overdue_surcharge', 'total')
+    result = {key: public_integer(source.get(key), 0, 10**9) for key in fields}
+    result['event_delta'] = public_integer(source.get('event_delta'), -10**9, 10**9)
+    return result
+
+
+def public_deadline(value):
+    source = as_dict(value)
+    if not source:
+        return {}
+    result = {key: source.get(key) if isinstance(source.get(key), str) else None
+              for key in ('id', 'title')}
+    fields = ('nominal_due_day', 'effective_due_day', 'unlocked_day', 'days_remaining',
+              'overdue_days', 'missed_day', 'completed_day', 'overdue_surcharge')
+    result.update({key: public_integer(source.get(key), 0, 10**9) for key in fields})
+    result['status'] = source.get('status') if source.get('status') in (
+        'active', 'missed', 'completed', 'completed_late') else None
+    return result
+
+
+def public_supplier(value):
+    source = as_dict(value)
+    if source.get('id') not in ('salvage', 'curated', 'focused'):
+        return {}
+    result = {key: source.get(key) if isinstance(source.get(key), str) else None
+              for key in ('id', 'name', 'description')}
+    result.update({key: public_integer(source.get(key), 0, 10**9)
+                   for key in ('cost', 'stock', 'remaining', 'energy_cost', 'unlock_day', 'daily_limit')})
+    result['unlocked'] = source.get('unlocked') if isinstance(source.get('unlocked'), bool) else None
+    # Names come only from the five published category IDs, never a sealed item.
+    result['categories'] = [{'id': key, 'name': KINDS[key]} for key in KINDS
+                            if any(as_dict(row).get('id') == key
+                                   for row in as_list(source.get('categories')))]
+    return result
+
+
+def public_management_detail(value, section='costs', page=0):
+    """Explicit projection for every management overlay and its hit payload."""
+    source = as_dict(value)
+    campaign = as_dict(source.get('campaign'))
+    paid = as_dict(source.get('last_settlement'))
+    result = {'_view': 'management', '_section': section if section in ('costs', 'deadlines', 'suppliers') else 'costs',
+              '_management_page': max(0, int(number(page))),
+              'day': public_integer(source.get('day'), 1, 10**9),
+              'phase': source.get('phase') if source.get('phase') in ('active', 'week_summary', 'lost') else None,
+              'operating_cost': public_integer(source.get('operating_cost'), 0, 10**9),
+              'operating_cost_breakdown': public_cost_breakdown(source.get('operating_cost_breakdown')),
+              'campaign': {'next_milestone': public_deadline(campaign.get('next_milestone')),
+                           'deadline_history': [public_deadline(row) for row in as_list(campaign.get('deadline_history')) if as_dict(row)]},
+              'suppliers': [row for row in (public_supplier(v) for v in as_list(source.get('suppliers'))) if row],
+              'last_settlement': None, 'crates': [], 'upgrade_details': []}
+    for row in as_list(source.get('upgrade_details')):
+        row = as_dict(row)
+        if row.get('id') in UPGRADES:
+            result['upgrade_details'].append(dict(id=row['id'], name=UPGRADES[row['id']], **{
+                key: public_integer(row.get(key), 0, 10**9) for key in (
+                    'daily_upkeep', 'daily_upkeep_from_day8', 'next_daily_upkeep',
+                    'next_daily_upkeep_from_day8', 'upkeep_unlock_day')}))
+    if paid:
+        result['last_settlement'] = {key: public_integer(paid.get(key), 0, 10**9)
+                                     for key in ('day', 'paid', 'credits_after_payment')}
+        result['last_settlement']['breakdown'] = public_cost_breakdown(paid.get('breakdown'))
+    for crate in as_list(source.get('crates')):
+        crate = as_dict(crate)
+        if crate.get('supplier') == 'focused' and crate.get('requested_kind') in KINDS:
+            result['crates'].append({'id': crate.get('id') if isinstance(crate.get('id'), str) else None,
+                                    'supplier': 'focused', 'requested_kind': crate['requested_kind'],
+                                    'requested_kind_label': KINDS[crate['requested_kind']]})
+    return result
+
+
+def deadline_summary(value):
+    stage = public_deadline(value)
+    due = stage.get('effective_due_day')
+    if due is None:
+        return '等待公开期限'
+    overdue = stage.get('overdue_days')
+    remaining = stage.get('days_remaining')
+    timing = f'逾期 {overdue} 天' if overdue else ('今日到期' if remaining == 0 else f'剩余 {remaining} 天' if remaining is not None else '等待公开进度')
+    return f'第 {due} 天到期 · {timing}'
 
 
 def public_roll(value):
@@ -140,7 +231,7 @@ def roll_status(roll, negotiation=None):
 
 
 def roll_rules_label(roll):
-    return 'v9 · D100 低骰规则' if percentile_rules(roll) else '不支持此规则版本 · 仅支持 v9'
+    return 'v10 · D100 低骰规则' if percentile_rules(roll) else '不支持此规则版本 · 仅支持 v10'
 
 
 def public_budget_range(value):
@@ -345,7 +436,7 @@ def roll_math(roll):
     """Read public adjudication fields verbatim; never estimate hidden economics."""
     roll = public_roll(roll)
     if roll.get('_unsupported_rules'):
-        return '不支持此规则版本 · 仅支持 v9'
+        return '不支持此规则版本 · 仅支持 v10'
     tens, ones, result = (roll.get(key) for key in ('tens', 'ones', 'roll'))
     if result is None:
         return 'D100 · 等待有效且一致的公开双骰'
@@ -357,12 +448,12 @@ def roll_math(roll):
 
 
 def public_negotiation(value):
-    """Keep native v9 quotes and their exact published preview public."""
+    """Keep native v10 quotes and their exact published preview public."""
     source = as_dict(value)
     if not source:
         return {}
     if (not percentile_rules(source) or type(source.get('origin_rules_version')) is not int
-            or source['origin_rules_version'] != 9):
+            or source['origin_rules_version'] != 10):
         return {'_unsupported_rules': True}
     fields = ('item_id', 'item_name', 'customer_id', 'customer_name', 'rules_version', 'origin_rules_version',
               'original_price', 'counter_offer', 'remaining_offers', 'final_offer_energy',
@@ -455,7 +546,7 @@ class ObservationReader:
                 self.stamp = None
                 self._contents = None
                 self.updated_at = None
-                self.error = '不支持此公开状态版本 · 仅支持 v9'
+                self.error = '不支持此公开状态版本 · 仅支持 v10'
                 return False
             # Private engine state is never public output.
             if any(k in data for k in ('rng_state', 'rng', 'hidden_items', '_rng', 'random_state')):
@@ -999,7 +1090,10 @@ class Renderer:
         g=self.stage_model(o)
         summary=o.get('phase')=='week_summary'
         self.text((x+18,y+13),'首周结算' if summary else '下一站',16,TEAL,True)
-        self.text((x+w-18,y+13),'可以继续经营' if summary else '长期经营',15,GOLD if summary else MUTED,anchor='rt')
+        stage=as_dict(as_dict(o.get('campaign')).get('next_milestone'))
+        deadline=public_deadline(stage)
+        label=deadline_summary(stage) if deadline.get('effective_due_day') is not None else '可以继续经营' if summary else '长期经营'
+        self.text((x+w-18,y+13),label,15,RED if deadline.get('overdue_days') else GOLD if summary else MUTED,False,w-122,anchor='rt')
         self.text((x+18,y+41),g['title'],24,INK,True,w-36)
         goals=g['goals']
         # The public campaign owns all milestone calculations, including reputation.
@@ -1013,6 +1107,8 @@ class Renderer:
         else:self.text((x+18,y+79),'  ·  '.join(pieces),18,GOLD,False,w-36)
         fractions=[number(v.get('current'))/max(1,number(v.get('target'),1)) for v in goals]
         self.progress(x+18,y+h-(7 if len(pieces)>4 else 12 if len(pieces)>2 else 20),w-36,min(fractions) if fractions else 1,TEAL,h=5)
+        if deadline.get('effective_due_day') is not None:
+            self.hits.append(((x,y,x+w,y+h),('inspect',public_management_detail(o,'deadlines'))))
 
     def event_card(self, box, o):
         x,y,w,h=box
@@ -1063,7 +1159,7 @@ class Renderer:
         percentile=percentile_preview(preview)
         if pending.get('_unsupported_rules'):
             self.rect((x,y,x+w,y+h),'#20353e',18,MUTED,1)
-            self.text((x+18,y+30),'不支持此议价版本 · 仅支持原生 v9',22,MUTED,True,w-36,2)
+            self.text((x+18,y+30),'不支持此议价版本 · 仅支持原生 v10',22,MUTED,True,w-36,2)
             return
         offer=int(number(pending.get('counter_offer')))
         accept=int(number(pending.get('accept_income'),offer))
@@ -1263,11 +1359,32 @@ class Renderer:
         if as_list(o.get('upgrade_details')):entries=[as_dict(e) for e in o['upgrade_details']]
         if not entries:entries=[{'id':'workbench','level':0},{'id':'shelf','level':0}]
         entries += [dict(as_dict(e),is_set=True) for e in as_list(o.get('collection_sets'))]
+        management=[]
+        costs_public=public_cost_breakdown(o.get('operating_cost_breakdown'))
+        n=collection_number
+        if costs_public:
+            management.append(dict(_management='costs',name=f"闭店费用 · {n(costs_public.get('total'))} 星币",
+                                   description=f"今日设施 {n(costs_public.get('facility_upkeep'))} · 第8天起 {n(costs_public.get('facility_upkeep_from_day8'))}/日 · 逾期 {n(costs_public.get('overdue_surcharge'))}"))
+        stage=as_dict(as_dict(o.get('campaign')).get('next_milestone'))
+        if public_deadline(stage).get('effective_due_day') is not None:
+            management.append(dict(_management='deadlines',name='阶段期限与迟到记录',description=deadline_summary(stage)))
+        suppliers=[public_supplier(v) for v in as_list(o.get('suppliers'))]
+        focused=next((v for v in suppliers if v.get('id')=='focused'),{})
+        if focused:
+            management.append(dict(_management='suppliers',name='分类采购 · 查看公开货源',
+                                   description=f"{n(focused.get('cost'))} 星币 · {n(focused.get('energy_cost'))} 精力 · 今日余 {n(focused.get('remaining'))} 箱"))
+        entries=management+entries
         per_page=max(1,int((h-80)/87)); pages=max(1,math.ceil(len(entries)/per_page)); page=self.page%pages
         self.page_count=pages
         for i,item in enumerate(entries[page*per_page:(page+1)*per_page]):
             yy=y+46+i*87;key=item.get('id',''); level=int(number(item.get('level')))
             self.rect((x,yy,x+w,yy+78),PANEL,14)
+            if item.get('_management'):
+                self.text((x+17,yy+11),item['name'],22,INK,True,w-45)
+                self.text((x+17,yy+45),item['description'],16,GOLD,False,w-34)
+                self.text((x+w-14,yy+12),'›',24,TEAL,True,anchor='rt')
+                self.hits.append(((x,yy,x+w,yy+78),('inspect',public_management_detail(o,item['_management']))))
+                continue
             self.item_art(x+10,yy+10,58,{'kind':'tool' if key=='workbench' else 'artifact','color':TEAL if level else '#728884'})
             self.text((x+82,yy+12),item.get('name') or UPGRADES.get(key,key or '小店设施'),22,INK,True,w-220)
             cost=item.get('next_cost',costs.get(key))
@@ -1275,7 +1392,13 @@ class Renderer:
             badge=f"{item.get('current',0)}/{item.get('required',3)}" if item.get('is_set') else f'Lv.{level}'
             self.text((x+82,yy+45),desc,16,MUTED,False,w-98)
             self.pill((x+w-94,yy+13),badge,GOLD,17,'#463d2d',11)
-            details=dict(item,description=(item.get('description') or item.get('effect','')) + (f"；下一次：{item.get('next_effect')}（{cost} 星币）" if cost is not None and item.get('next_effect') else ''))
+            upkeep=''
+            if not item.get('is_set') and 'daily_upkeep' in item:
+                upkeep=f"；今日设施费 {n(public_integer(item.get('daily_upkeep'),0,10**9))} 星币/日，第8天起 {n(public_integer(item.get('daily_upkeep_from_day8'),0,10**9))} 星币/日"
+                if item.get('next_daily_upkeep_from_day8') is not None:
+                    upkeep+=f"；升级后今日 {n(public_integer(item.get('next_daily_upkeep'),0,10**9))}、第8天起 {n(public_integer(item.get('next_daily_upkeep_from_day8'),0,10**9))} 星币/日"
+            details={key:item.get(key) for key in ('id','name','kind','color')}
+            details['description']=(item.get('description') or item.get('effect','')) + (f"；下一次：{item.get('next_effect')}（{cost} 星币）" if cost is not None and item.get('next_effect') else '')+upkeep
             self.hits.append(((x,yy,x+w,yy+78),('inspect',details)))
         self.pagination((x,y+h-28,w,28),page,pages)
 
@@ -1314,7 +1437,7 @@ class Renderer:
             self.text((tx,yy+10),label,21,color,True,w-190)
             stage='最终议价' if roll.get('stage')=='final' else '初次报价'
             self.text((x+w-13,yy+14),f'第 {int(number(roll.get("day"),1))} 天',14,MUTED,anchor='rt')
-            rules='v9 低骰' if percentile_rules(roll) else roll_rules_label(roll)
+            rules='v10 低骰' if percentile_rules(roll) else roll_rules_label(roll)
             self.text((tx,yy+43),f'{rules} · {stage} · {roll.get("customer_name") or "旅客"} · {roll.get("item_name") or "旧物"}',15,INK,False,w-105)
             self.text((tx,yy+70),roll_math(roll),14,MUTED,False,w-105)
             self.hits.append(((x,yy,x+w,yy+rowh-8),('inspect',dict(roll,_view='roll'))))
@@ -1497,6 +1620,7 @@ class Renderer:
         if item.get('_view')=='negotiation':return self.bargaining_detail(item)
         if item.get('_view')=='sale':return self.sale_detail(item)
         if item.get('_view')=='walkins':return self.walkins_detail(item)
+        if item.get('_view')=='management':return self.management_detail(item)
         overlay=Image.new('RGBA',self.image.size,(6,16,24,210))
         self.image=Image.alpha_composite(self.image.convert('RGBA'),overlay).convert('RGB')
         self.draw=ImageDraw.Draw(self.image)
@@ -1509,6 +1633,94 @@ class Renderer:
         unknown=item.get('discovered') is False
         self.text((x+w/2,y+220),'???' if unknown else item.get('name','小店档案'),32,INK,True,w-50,1,anchor='mt')
         self.text((x+31,y+284),'尚未遇见。亲手开箱后，才会在这里留下画像和故事。' if unknown else item.get('description') or '这件旧物的故事，还在慢慢展开。',23,MUTED,False,w-62,5)
+
+    def management_detail(self, source):
+        """Paginated public explanations; no management action is exposed."""
+        data=public_management_detail(source,source.get('_section'),source.get('_management_page'))
+        section=data['_section'];n=collection_number
+        overlay=Image.new('RGBA',self.image.size,(6,16,24,225))
+        self.image=Image.alpha_composite(self.image.convert('RGBA'),overlay).convert('RGB');self.draw=ImageDraw.Draw(self.image)
+        w=min(self.W-40,710);h=860;x=(self.W-w)/2;y=(self.H-h)/2
+        self.rect((x,y,x+w,y+h),'#263d45',25,TEAL,2)
+        self.hits=[((0,0,self.W,self.H),('close',None))]
+        title={'costs':'闭店费用明细','deadlines':'阶段期限与记录','suppliers':'公开采购货源'}[section]
+        self.text((x+24,y+24),title,24,INK,True,w-162)
+        self.text((x+w-22,y+30),'点击返回 ×',16,MUTED,anchor='rt')
+        page=data['_management_page'];pages=1
+        if section=='costs':
+            costs=data['operating_cost_breakdown']
+            caption='本次闭店应付' if data.get('phase')=='active' else '当前规则费用参考'
+            self.text((x+24,y+85),f"{caption} {n(costs.get('total'))} 星币",26,GOLD,True,w-48)
+            labels=(('基础营业费','base'),('港口事件调整','event_delta'),('植物套装减免','plant_discount'),
+                    ('调整后营业费','base_after_modifiers'),('今日设施养护','facility_upkeep'),('当前阶段逾期费','overdue_surcharge'))
+            for i,(label,key) in enumerate(labels):
+                value=costs.get(key)
+                amount=f'{value:+d}' if key=='event_delta' and value is not None else f'−{value}' if key=='plant_discount' and value is not None else n(value)
+                self.text((x+24,y+136+i*30),f'{label}  {amount} 星币',19,TEAL if key=='base_after_modifiers' else MUTED,False,w-48)
+            self.line([(x+24,y+327),(x+w-24,y+327)],LINE,1)
+            self.text((x+24,y+343),'设施：今日 / 第8天起 / 升级后第8天起',17,TEAL,True,w-48)
+            for i,row in enumerate(data['upgrade_details'][:3]):
+                next_fee=n(row.get('next_daily_upkeep_from_day8')) if row.get('next_daily_upkeep_from_day8') is not None else '已满级'
+                self.text((x+24,y+377+i*28),f"{row['name']}  {n(row.get('daily_upkeep'))} / {n(row.get('daily_upkeep_from_day8'))} / {next_fee}",18,INK,False,w-48)
+            self.text((x+24,y+474),f"第8天起，现有设施合计 {n(costs.get('facility_upkeep_from_day8'))} 星币/日",19,GOLD,True,w-48)
+            self.text((x+24,y+510),'首周无设施费；之后设施合计最高12/日。逾期费只计当前阶段，最高6/日。',17,MUTED,False,w-48,2)
+            self.text((x+24,y+568),'闭店先支付当日费用，再以扣款后现金判定阶段目标。当前预估会随设施与事件变化。',18,INK,False,w-48,3)
+            paid=as_dict(data['last_settlement'])
+            if paid:
+                self.text((x+24,y+653),f"最近已结算：第 {n(paid.get('day'))} 天 · 已支付 {n(paid.get('paid'))} 星币",19,TEAL,True,w-48,2)
+                self.text((x+24,y+709),f"扣款后现金 {n(paid.get('credits_after_payment'))} 星币",18,INK,False,w-48)
+                previous=as_dict(paid.get('breakdown'))
+                self.text((x+24,y+748),f"当次调整后营业 {n(previous.get('base_after_modifiers'))} + 设施 {n(previous.get('facility_upkeep'))} + 逾期 {n(previous.get('overdue_surcharge'))}",16,MUTED,False,w-48,2)
+            else:self.text((x+24,y+661),'尚无已支付的闭店结算',19,MUTED,False,w-48)
+        elif section=='deadlines':
+            stage=data['campaign']['next_milestone']
+            self.text((x+24,y+86),stage.get('title') or '等待公开阶段',26,INK,True,w-48,2)
+            self.text((x+24,y+164),deadline_summary(stage),22,RED if stage.get('overdue_days') else GOLD,True,w-48)
+            self.text((x+24,y+207),f"计划期限 第 {n(stage.get('nominal_due_day'))} 天 · 实际期限 第 {n(stage.get('effective_due_day'))} 天",18,MUTED,False,w-48,2)
+            self.text((x+24,y+261),f"第 {n(stage.get('unlocked_day'))} 天解锁 · 当前逾期费 {n(stage.get('overdue_surcharge'))} 星币/日",18,INK,False,w-48,2)
+            self.text((x+24,y+315),'后续阶段解锁后至少留7天；逾期仍可补齐。只计当前阶段逾期费，旧阶段迟到记录保留。',18,MUTED,False,w-48,3)
+            self.text((x+24,y+399),'闭店扣费后才判定达标；先前扣过的逾期费不会随阶段完成退回。',17,GOLD,False,w-48,2)
+            self.text((x+24,y+461),'阶段历史',20,TEAL,True,w-48)
+            history=list(reversed(data['campaign']['deadline_history']))
+            pages=max(1,math.ceil(len(history)/4));page%=pages
+            statuses={'active':'进行中','missed':'期限已错过','completed':'按期完成','completed_late':'迟到后完成'}
+            for i,row in enumerate(history[page*4:(page+1)*4]):
+                yy=y+501+i*70
+                self.text((x+24,yy),row.get('title') or '公开阶段',18,INK,True,w-48)
+                missed=f"错过 {row['missed_day']}" if row.get('missed_day') is not None else '未错过期限'
+                completed=f"完成 {row['completed_day']}" if row.get('completed_day') is not None else '尚未完成'
+                timing=f"期限 {n(row.get('effective_due_day'))} · {missed} · {completed}"
+                self.text((x+24,yy+29),statuses.get(row.get('status'),'等待公开记录')+' · '+timing,15,MUTED,False,w-48)
+            if not history:self.text((x+24,y+501),'暂无公开期限记录',18,MUTED,False,w-48)
+        else:
+            suppliers=sorted(data['suppliers'],key=lambda row:row.get('id')!='focused')
+            pages=max(1,len(suppliers));page%=pages
+            supplier=suppliers[page] if suppliers else {}
+            self.text((x+24,y+86),supplier.get('name') or '等待公开货源',26,INK,True,w-48,2)
+            unlocked=supplier.get('unlocked')
+            availability='已开放' if unlocked is True else f"第 {n(supplier.get('unlock_day'))} 天开放" if unlocked is False else '等待公开开放状态'
+            self.text((x+24,y+164),availability,22,TEAL if unlocked else GOLD,True,w-48)
+            self.text((x+24,y+207),f"每箱 {n(supplier.get('cost'))} 星币 · {n(supplier.get('energy_cost'))} 精力",24,GOLD,True,w-48)
+            self.text((x+24,y+252),f"今日剩余 {n(supplier.get('remaining'))} 箱 · 每日限额 {n(supplier.get('daily_limit'))} 箱",19,INK,False,w-48)
+            self.text((x+24,y+297),supplier.get('description') or '等待公开采购说明',18,MUTED,False,w-48,3)
+            focused=supplier.get('id')=='focused'
+            self.text((x+24,y+389),'可选类别（由店长在CLI指定）' if focused else '供应商封存箱',20,TEAL,True,w-48)
+            for i,row in enumerate(supplier.get('categories',[])[:5]):
+                self.text((x+24,y+430+i*30),f"{row['name']} · {row['id']}",19,INK,False,w-48)
+            if focused:
+                crates=data['crates']
+                labels='、'.join(f"{row.get('id') or '货箱'}（{row['requested_kind_label']}）" for row in crates)
+                self.text((x+24,y+602),'待开分类箱：'+(labels or '暂无'),17,GOLD,False,w-48,3)
+                self.text((x+24,y+683),'类别只限定抽取范围；不指定某件旧物，稀有度、品相与箱内身份仍须开箱揭晓。',18,MUTED,False,w-48,3)
+            else:self.text((x+24,y+451),'购买后只看到封存箱。开箱前，不显示任何箱内物品身份。',19,MUTED,False,w-48,3)
+            self.text((x+24,y+766),'公开信息可翻看；采购和开箱仍由店长使用CLI执行。',16,MUTED,False,w-48,2)
+        if pages>1:
+            self.text((x+w/2,y+h-39),f'{page+1} / {pages} · 翻看公开记录',16,TEAL,False,anchor='mt')
+            self.text((x+25,y+h-44),'‹',27,GOLD,True)
+            self.text((x+w-25,y+h-44),'›',27,GOLD,True,anchor='rt')
+            self.hits.extend([((x,y+h-57,x+w*.27,y+h-9),('management_page',-1)),
+                              ((x+w*.73,y+h-57,x+w,y+h-9),('management_page',1))])
+        else:self.text((x+24,y+h-39),'只读说明 · 不付款、不采购、不推进游戏',15,MUTED,False,w-48)
 
     def sale_detail(self, source):
         """Public pre-sale conditions only; clicking never attempts a sale."""
@@ -1608,7 +1820,7 @@ class Renderer:
         self.text((x+24,y+24),'演示数据 · 骰子记录' if self.demo else '已判定的骰子记录',19,TEAL,True,w-145)
         self.text((x+w-24,y+27),'点击返回 ×',16,MUTED,anchor='rt')
         if roll.get('_unsupported_rules'):
-            self.text((x+27,y+92),'不支持此规则版本 · 仅支持 v9',24,MUTED,True,w-54,2)
+            self.text((x+27,y+92),'不支持此规则版本 · 仅支持 v10',24,MUTED,True,w-54,2)
             return
         self.roll_art(x+w/2-72,y+73,144,roll,color)
         self.text((x+w/2,y+222),roll_rules_label(roll),16,MUTED,False,w-54,anchor='mt')
@@ -1653,7 +1865,7 @@ class Renderer:
         narrow=width<600 and not wide
         o=as_dict(observation)
         if o and not native_observation(o):
-            o={};detail=None;error='不支持此公开状态版本 · 仅支持 v9'
+            o={};detail=None;error='不支持此公开状态版本 · 仅支持 v10'
         if not o:detail=None
         current_roll=public_roll(o.get('last_roll') or as_dict(o.get('last_event')).get('roll'))
         extra=126 if has_bargaining_preview(o.get('negotiation')) else (32 if has_roll_breakdown(current_roll) and (as_dict(as_dict(o.get('last_event')).get('roll')) or not as_dict(o.get('last_event')).get('type')) else 0)
@@ -1776,6 +1988,11 @@ class Spectator:
                 count=len(as_list(as_dict(self.detail.get('_collection')).get('items')))
                 self.detail=dict(self.detail,_collection_page=(int(number(self.detail.get('_collection_page')))+action[1])%max(1,count))
                 self.last_signature=None
+            elif action[0]=='management_page' and as_dict(self.detail).get('_view')=='management':
+                section=self.detail.get('_section')
+                count=len(as_list(self.detail.get('suppliers'))) if section=='suppliers' else math.ceil(len(as_list(as_dict(self.detail.get('campaign')).get('deadline_history')))/4)
+                self.detail=dict(self.detail,_management_page=(int(number(self.detail.get('_management_page')))+action[1])%max(1,count))
+                self.last_signature=None
             elif action[0]=='close':self.detail=None;self.last_signature=None
 
     def refresh_detail(self):
@@ -1786,7 +2003,9 @@ class Spectator:
             self.detail=None
             return
         pending=public_negotiation(observation.get('negotiation'))
-        if detail.get('_view')=='codex':
+        if detail.get('_view')=='management':
+            self.detail=public_management_detail(observation,detail.get('_section'),detail.get('_management_page'))
+        elif detail.get('_view')=='codex':
             entries=as_list(as_dict(as_dict(self.reader.observation).get('codex')).get('entries'))
             entry=next((public_catalog_entry(v,slot) for slot,v in enumerate(entries,1)
                         if (public_integer(as_dict(v).get('slot'),1,10**6) or slot)==detail.get('slot')),None)
@@ -1829,7 +2048,7 @@ class Spectator:
 
 
 def main(argv=None):
-    parser=argparse.ArgumentParser(description='星屑杂货铺：v9 双 D10 百分骰低骰房规，只读观战')
+    parser=argparse.ArgumentParser(description='星屑杂货铺：v10 双 D10 百分骰低骰房规，只读观战')
     parser.add_argument('--observation',default=str(Path(__file__).with_name('observation.json')))
     parser.add_argument('--fullscreen',action='store_true')
     parser.add_argument('--geometry',help='可选窗口尺寸，例如 760x1240')

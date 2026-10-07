@@ -1,10 +1,46 @@
-"""Native v9 synthetic fixtures; never access a live or default save."""
+"""Native v10 synthetic fixtures; never access a live or default save."""
 from functools import lru_cache
 import hashlib
 import json
 import math
 import random
 import engine
+
+
+def sync_stage_history(state):
+    """Build explicit synthetic history when a fixture supplies earned stages.
+
+    Test-only fixture construction; never a migration or production repair path.
+    """
+    history = []
+    unlocked = 1
+    for index in range(len(state['milestones']) + 1):
+        definition = (engine.MILESTONES[index] if index < 4 else
+                      dict(id=f'voyage_{index - 3}', title=f'星海长航 · 第{index - 3}章'))
+        nominal = (7, 14, 28, 42)[index] if index < 4 else 56 + 14 * (index - 4)
+        effective = nominal if index == 0 else max(nominal, unlocked + 7)
+        completed = state['milestones'][index]['day'] if index < len(state['milestones']) else None
+        missed = effective if ((completed is not None and completed > effective) or
+                              (completed is None and state['day'] > effective)) else None
+        history.append(dict(id=definition['id'], title=definition['title'],
+                            nominal_due_day=nominal, effective_due_day=effective,
+                            unlocked_day=unlocked, missed_day=missed, completed_day=completed))
+        if completed is not None:
+            unlocked = completed
+    state['stage_history'] = history
+    return state
+
+
+def legacy_trade_digest(value):
+    """Retain the v9 behavioral golden while checking v10 tags separately."""
+    def normalize(node):
+        if isinstance(node, dict):
+            return {key: 9 if key in {'rules_version', 'origin_rules_version'} else normalize(item)
+                    for key, item in node.items()}
+        if isinstance(node, (list, tuple)):
+            return [normalize(item) for item in node]
+        return node
+    return digest(normalize(value))
 
 
 def digest(value):

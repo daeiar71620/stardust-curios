@@ -1,4 +1,4 @@
-"""Native v9 campaign regressions: synthetic fixtures only, never the user's original game."""
+"""Native v10 campaign regressions: synthetic fixtures only, never the user's original game."""
 import copy
 import json
 from pathlib import Path
@@ -6,6 +6,7 @@ import tempfile
 import unittest
 
 import engine
+from native_test_helpers import sync_stage_history
 
 
 class ExpansionTests(unittest.TestCase):
@@ -159,6 +160,9 @@ class ExpansionTests(unittest.TestCase):
         state = self.store.load()
         state.update(day=8, credits=1500, first_week_result="won", reputation=12)
         state["walkins"]["day"] = 8
+        state['milestones'] = [dict(id=engine.MILESTONES[0]['id'],
+                                    title=engine.MILESTONES[0]['title'], day=7)]
+        sync_stage_history(state)
         state["upgrades"].update(workbench=1, shelf=1)
         for index, row in enumerate(engine.CATALOG[:5]):
             item = dict(catalog_id=row[0], name=row[1], rarity=row[2], kind=row[3], base_value=row[4], description=row[5],
@@ -173,6 +177,8 @@ class ExpansionTests(unittest.TestCase):
         state["credits"] = 1600
         self.write(state)
         obs = self.store.execute("upgrade", "display")
+        self.assertEqual(len(obs["campaign"]["completed_milestones"]), 1)
+        obs = self.store.execute('endday')
         self.assertEqual(len(obs["campaign"]["completed_milestones"]), 2)
         obs = self.store.execute("buy", "curated")
         self.assertEqual(len(obs["campaign"]["completed_milestones"]), 2)

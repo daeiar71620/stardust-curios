@@ -1,4 +1,4 @@
-"""Latest-only boundary checks on synthetic native v9 data."""
+"""Latest-only boundary checks on synthetic native v10 data."""
 import copy
 import json
 from pathlib import Path
@@ -10,13 +10,13 @@ import engine
 from native_test_helpers import fixture
 
 PROVENANCE = ('migration', 'engine_upgrade', 'management_upgrade', 'collection_upgrade', 'budget_upgrade')
-PUBLIC_FIELDS = {'version', 'revision', 'day', 'total_days', 'phase', 'credits', 'energy', 'max_energy',
+PUBLIC_FIELDS = {'version', 'protocol_version', 'revision', 'day', 'total_days', 'phase', 'credits', 'energy', 'max_energy',
                  'reputation', 'capacity', 'inventory', 'crates', 'collection', 'collection_sets',
                  'collection_progress', 'upgrades', 'demand', 'daily_event', 'operating_cost', 'suppliers',
                  'upgrade_costs', 'upgrade_details', 'visitors', 'walkins', 'negotiation', 'trade_rules',
                  'last_roll', 'roll_history', 'campaign', 'stats', 'migration', 'engine_upgrade',
                  'management_upgrade', 'collection_upgrade', 'budget_upgrade', 'codex', 'log',
-                 'last_event', 'goal'}
+                 'last_event', 'goal', 'operating_cost_breakdown', 'last_settlement'}
 
 
 class LatestOnlyTests(unittest.TestCase):
@@ -45,7 +45,7 @@ class LatestOnlyTests(unittest.TestCase):
         self.assertFalse(self.store.lock_path.exists())
 
     def test_non_native_versions_are_rejected_without_rewriting(self):
-        for version in (None, True, 0, *range(1, 9), 9.0, '9', 10):
+        for version in (None, True, 0, *range(1, 10), 10.0, '10', 11):
             state = engine.new_state(42)
             state['version'] = version
             with self.subTest(version=version):
@@ -64,7 +64,7 @@ class LatestOnlyTests(unittest.TestCase):
 
     def test_all_historical_initial_formula_versions_are_rejected(self):
         context = dict(reference=100, budget=100, modifier=0, modifiers=[])
-        for version in (None, True, *range(1, 9), 9.0, '9', 10):
+        for version in (None, True, *range(1, 10), 10.0, '10', 11):
             with self.subTest(version=version), self.assertRaises(engine.GameError):
                 engine._initial_chance(context, 101, version)
 
@@ -72,7 +72,7 @@ class LatestOnlyTests(unittest.TestCase):
         native = fixture(99)
         engine.apply_command(native, 'sell', ['I001'])
         self.assertIsNotNone(native['negotiation'])
-        for version in (3, 4, 5, 6, 8):
+        for version in (3, 4, 5, 6, 8, 9):
             for target in ('roll', 'origin', 'rules'):
                 state = copy.deepcopy(native)
                 if target == 'roll':
@@ -94,10 +94,12 @@ class LatestOnlyTests(unittest.TestCase):
         state['last_event']['roll'] = copy.deepcopy(row)
         self.rejected_unchanged(state)
 
-    def test_public_contract_remains_39_fields_and_null_provenance(self):
+    def test_public_contract_includes_v10_costs_and_settlement_with_null_provenance(self):
         public = engine.observation(engine.new_state(42))
         self.assertEqual(set(public), PUBLIC_FIELDS)
-        self.assertEqual(len(public), 39)
+        self.assertEqual(len(public), 42)
+        self.assertEqual(public['protocol_version'], 10)
+        self.assertEqual(public['trade_rules']['version'], 10)
         self.assertTrue(all(public[field] is None for field in PROVENANCE))
         self.assertFalse(public['collection_progress']['legacy_grace'])
         self.assertFalse(public['campaign']['next_milestone']['legacy_grace'])
@@ -123,7 +125,7 @@ class LatestOnlyTests(unittest.TestCase):
         self.store.save_path.write_text('{"version": 8}', encoding='utf-8')
         with mock.patch.object(engine, 'new_state', return_value=engine.new_state(71)):
             public = self.store.execute('restart', '--confirm')
-        self.assertEqual(public['version'], 9)
+        self.assertEqual(public['version'], 10)
         self.assertEqual(public['day'], 1)
         self.assertTrue(all(public[field] is None for field in PROVENANCE))
         engine._validate_state(self.store.load())

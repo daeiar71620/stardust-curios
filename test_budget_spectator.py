@@ -1,4 +1,4 @@
-"""Read-only v9 budget UI checks with synthetic public scenes only.
+"""Read-only v10 budget UI checks with synthetic public scenes only.
 
 No actual game, private save, or persisted demonstration artifact is used.
 """
@@ -22,7 +22,7 @@ SIZES = ((1320, 940), (760, 1240), (390, 844), (320, 568), (1364, 1024))
 
 def budget_fixture():
     observation = customer_fixture()
-    observation.update(version=9, budget_upgrade=None)
+    observation.update(version=10, budget_upgrade=None)
     for option in observation['inventory'][0]['sale_options']:
         consequence = ('普通失败会提出一次还价；100仍直接离店。' if option['counter_eligible']
                        else '普通失败直接离店，不会还价；01仍可按标价成交。')
@@ -50,17 +50,17 @@ class BudgetSpectatorTests(unittest.TestCase):
         return public_sale_detail(self.observation['inventory'][0],
                                   self.observation['walkins'], page)
 
-    def test_native_percentile_label_requires_v9_rule_identity(self):
+    def test_native_percentile_label_requires_v10_rule_identity(self):
         roll = percentile_fixture(tens=0, ones=1, outcome='miracle')['last_roll']
-        self.assertEqual(roll_rules_label(roll), 'v9 · D100 低骰规则')
-        self.assertTrue(percentile_rules({'rules_version': 9}))
+        self.assertEqual(roll_rules_label(roll), 'v10 · D100 低骰规则')
+        self.assertTrue(percentile_rules({'rules_version': 10}))
         del roll['die']
         self.assertEqual(public_roll(roll)['roll'], 1)
-        for version in (None, 2, 3, 4, 5, 6, 7, 8, True, 9.0, '9', 10):
+        for version in (None, 2, 3, 4, 5, 6, 7, 8, 9, True, 10.0, '10', 11):
             old = dict(roll, rules_version=version, face=20)
             self.assertFalse(percentile_rules(old))
             self.assertEqual(public_roll(old), {'_unsupported_rules': True})
-            self.assertEqual(roll_rules_label(old), '不支持此规则版本 · 仅支持 v9')
+            self.assertEqual(roll_rules_label(old), '不支持此规则版本 · 仅支持 v10')
 
     def test_new_public_range_is_normal_spending_comfort(self):
         for tab, _ in TABS:

@@ -13,7 +13,7 @@ from spectator import (ObservationReader, Renderer, Spectator, TABS, main, safe_
 def fixture():
     item={'id':'I001','art_id':'music','name':'彗星玻璃八音盒','kind':'artifact','rarity':'rare','color':'#b7a2ff',
           'condition':76,'price':150,'value_estimate':[130,175],'description':'每次彗星经过，它会多记住一个音符。'}
-    return {'version':9,'revision':1,'day':8,'credits':780,'energy':13,'max_energy':13,'reputation':8,
+    return {'version':10,'revision':1,'day':8,'credits':780,'energy':13,'max_energy':13,'reputation':8,
       'phase':'active','inventory':[item], 'collection':[dict(item,collected=True)],'crates':[],
       'capacity':10,'demand':{'label':'机器人收藏热 · +25%'},
       'last_event':{'seq':1,'title':'小店继续开门','text':'首周之后，新的旅客推开了门。','item':item},
@@ -146,10 +146,10 @@ class ReaderTests(unittest.TestCase):
 
 def percentile_fixture(*, tens=70, ones=5, threshold=58, outcome='failure',
                        pending=False, stage='initial', price=165):
-    """Synthetic v9 public data, with no engine import or game-state access."""
-    obs=fixture();obs['version']=9
+    """Synthetic v10 public data, with no engine import or game-state access."""
+    obs=fixture();obs['version']=10
     roll={'id':'P001','day':8,'item_id':'I001','item_name':'彗星玻璃八音盒',
-          'customer_id':'mira','customer_name':'米拉','stage':stage,'rules_version':9,
+          'customer_id':'mira','customer_name':'米拉','stage':stage,'rules_version':10,
           'die':'D100','tens':tens,'ones':ones,'roll':tens+ones or 100,
           'threshold':threshold,'probability':threshold/100,'modifier':0,'modifiers':[],
           'success':outcome in ('success','miracle'),'outcome':outcome,'price':price,
@@ -167,7 +167,7 @@ def percentile_fixture(*, tens=70, ones=5, threshold=58, outcome='failure',
                  'accept_income':150,'success_income':price,'failure_income':0,
                  'warning':'最终失败收入0，不能回头接受旧还价。','suggested':False}
         obs['negotiation']={'item_id':'I001','item_name':roll['item_name'],
-            'customer_id':'mira','customer_name':'米拉','rules_version':9,'origin_rules_version':9,
+            'customer_id':'mira','customer_name':'米拉','rules_version':10,'origin_rules_version':10,
             'original_price':9999,'counter_offer':150,'remaining_offers':1,'final_offer_energy':1,
             'accept_income':150,'final_failure_income':0,
             'final_offer_bounds':{'min':151,'max':9998,'available':True},'preview':preview}
@@ -205,7 +205,7 @@ class NativeDiceRendererTests(unittest.TestCase):
         self.assertNotIn('演示数据 · 不是真实游玩',self.renderer.words)
         self.renderer.render(percentile_fixture(),demo=True)
         self.assertIn('演示数据 · 不是真实游玩',self.renderer.words)
-        self.assertIn('v9 · D100 低骰规则 · 演示',self.renderer.words)
+        self.assertIn('v10 · D100 低骰规则 · 演示',self.renderer.words)
 
     def test_renderer_never_mutates_or_rerolls(self):
         obs=percentile_fixture();before=copy.deepcopy(obs)
@@ -433,13 +433,13 @@ class PercentileRendererTests(unittest.TestCase):
 class NativeVersionBoundaryTests(unittest.TestCase):
     def test_unsupported_observations_are_redacted_in_every_view(self):
         renderer = Renderer()
-        for version in (None, 2, 3, 4, 5, 6, 7, 8, 10, True, 9.0, '9'):
+        for version in (None, 2, 3, 4, 5, 6, 7, 8, 9, 11, True, 10.0, '10'):
             obs = percentile_fixture(pending=True)
             obs.update(version=version, credits=123456789)
             before = copy.deepcopy(obs)
             for tab, _ in TABS:
                 renderer.render(obs, (390, 844), tab, detail=dict(obs['last_roll'], _view='roll'))
-                self.assertIn('不支持此公开状态版本 · 仅支持 v9', renderer.words)
+                self.assertIn('不支持此公开状态版本 · 仅支持 v10', renderer.words)
                 self.assertNotIn('123,456,789', renderer.words)
                 self.assertNotIn('D100 75', renderer.words)
                 self.assertEqual(renderer.hits, [])
@@ -451,11 +451,11 @@ class NativeVersionBoundaryTests(unittest.TestCase):
             obs = fixture()
             obs[key] = {'from': 8}
             renderer.render(obs)
-            self.assertIn('不支持此公开状态版本 · 仅支持 v9', renderer.words)
+            self.assertIn('不支持此公开状态版本 · 仅支持 v10', renderer.words)
         obs = fixture()
         obs['collection_progress'] = {'legacy_grace': True}
         renderer.render(obs)
-        self.assertIn('不支持此公开状态版本 · 仅支持 v9', renderer.words)
+        self.assertIn('不支持此公开状态版本 · 仅支持 v10', renderer.words)
 
     def test_reader_rejects_unsupported_schema_and_drops_stale_snapshot(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -467,7 +467,7 @@ class NativeVersionBoundaryTests(unittest.TestCase):
             path.write_text(json.dumps(old)); before = path.read_bytes()
             self.assertFalse(reader.poll())
             self.assertIsNone(reader.observation)
-            self.assertIn('仅支持 v9', reader.error)
+            self.assertIn('仅支持 v10', reader.error)
             renderer = Renderer()
             renderer.render(reader.observation, error=reader.error, detail={'name': 'STALE_ITEM', 'description': 'STALE_STORY'})
             self.assertNotIn('STALE', str(renderer.words))
@@ -491,7 +491,7 @@ class NativeVersionBoundaryTests(unittest.TestCase):
                 renderer.render(obs, size, 'journal', page=page, journal_mode='rolls')
                 words.extend(renderer.words)
             self.assertTrue(any('不支持此规则版本' in word for word in words))
-            self.assertTrue(any('v9 低骰' in word for word in words))
+            self.assertTrue(any('v10 低骰' in word for word in words))
             self.assertNotIn('UNSUPPORTED', str(words))
             renderer.render(obs, size, detail=dict(old, _view='roll'))
             self.assertNotIn('UNSUPPORTED', str(renderer.words))
@@ -500,7 +500,7 @@ class NativeVersionBoundaryTests(unittest.TestCase):
 
     def test_old_quotes_cannot_become_native_previews(self):
         renderer = Renderer()
-        for rules, origin in ((3, 3), (4, 4), (5, 5), (6, 6), (9, 3), (9, 4), (9, 5), (9, 6), (9, None)):
+        for rules, origin in ((3, 3), (4, 4), (5, 5), (6, 6), (9, 9), (10, 3), (10, 4), (10, 5), (10, 6), (10, 9), (10, None)):
             obs = percentile_fixture(pending=True)
             obs['negotiation'].update(rules_version=rules, origin_rules_version=origin,
                                       item_name='UNSUPPORTED_QUOTE')
@@ -508,7 +508,7 @@ class NativeVersionBoundaryTests(unittest.TestCase):
             self.assertEqual(public_negotiation(obs['negotiation']), {'_unsupported_rules': True})
             for detail in (None, dict(_view='negotiation', negotiation=obs['negotiation'])):
                 renderer.render(obs, (390, 844), detail=detail)
-                self.assertIn('不支持此议价版本 · 仅支持原生 v9', renderer.words)
+                self.assertIn('不支持此议价版本 · 仅支持原生 v10', renderer.words)
                 self.assertNotIn('UNSUPPORTED_QUOTE', renderer.words)
                 self.assertFalse(any('拟报价' in word or '低骰成功：' in word for word in renderer.words))
             self.assertEqual(obs, before)

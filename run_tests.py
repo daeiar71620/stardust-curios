@@ -18,6 +18,7 @@ HEADLESS_MODULES = (
     "test_catalog_privacy",
     "test_collections",
     "test_latest_only",
+    "test_v10_rules",
     "test_management",
     "test_management_audit",
     "test_standalone",

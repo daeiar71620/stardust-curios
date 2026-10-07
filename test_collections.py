@@ -1,4 +1,4 @@
-"""Native v9 quality-collection acceptance tests.
+"""Native v10 quality-collection acceptance tests.
 
 Fixtures are synthetic, built from the public catalog, and written only into
 TemporaryDirectory instances. This suite never reads the default or a real save.
@@ -12,7 +12,7 @@ import tempfile
 import unittest
 
 import engine
-from native_test_helpers import digest, rng_for
+from native_test_helpers import digest, legacy_trade_digest, rng_for, sync_stage_history
 
 
 def item(catalog_id, number, condition=80, collected=False, **changes):
@@ -44,6 +44,7 @@ def fixture(stage=0):
         state['upgrades'] = {key: 3 for key in engine.UPGRADE_RULES}
         state['milestones'] = [dict(id=row['id'], title=row['title'], day=7)
                                for row in engine.MILESTONES[:stage]]
+        sync_stage_history(state)
     return state
 
 
@@ -76,7 +77,7 @@ class CollectionHarness(unittest.TestCase):
 class QualityMilestoneTests(CollectionHarness):
     def test_current_schema_keeps_quality_progress_and_marks_current_trades(self):
         state = fixture()
-        self.assertEqual(engine.VERSION, 9)
+        self.assertEqual(engine.VERSION, 10)
         self.assertEqual(state['version'], engine.VERSION)
         self.assertIsNone(state['collection_upgrade'])
         state['inventory'] = [item('wrench', 1)]
@@ -225,7 +226,7 @@ class QualityMilestoneTests(CollectionHarness):
                 self.assertTrue(engine._has_set(current, kind))
                 values = [engine.observation(current)['collection_sets'], engine._max_energy(current),
                           engine._operating_cost(current), engine._repair_cost(current, current['collection'][0]),
-                          {supplier: engine._stock_limit(current, supplier) for supplier in engine.SUPPLIERS}]
+                          {supplier: engine._stock_limit(current, supplier) for supplier in ('salvage', 'curated')}]
                 self.assertEqual(digest(values), expected[kind])
                 self.assertEqual(engine.observation(current)['collection_progress']['qualified_count'], 0)
 
@@ -247,6 +248,7 @@ class QualityMilestoneTests(CollectionHarness):
             self.assertEqual(goals['quality_themes']['target'], 4 if voyage == 1 else 5)
             milestone = engine._next_milestone(state)
             state['milestones'].append(dict(id=milestone['id'], title=milestone['title'], day=8))
+            sync_stage_history(state)
 
 
 class ReplacementTests(CollectionHarness):
@@ -339,7 +341,7 @@ class ReplacementTests(CollectionHarness):
         self.assertTrue(public['collection'][0]['sale_attempted_today'])
         self.assertEqual(pending['item_id'], 'I002')
 
-    def test_replacement_can_complete_stage_without_granting_cash_or_rng(self):
+    def test_replacement_qualifies_stage_without_cash_rng_or_early_award(self):
         state = cabinet(fixture(1), ['wrench', 'lamp', 'welder', 'coffee', 'cleaner'],
                         [75, 75, 75, 75, 74])
         state['inventory'] = [item('cleaner', 6, 75)]
@@ -347,13 +349,19 @@ class ReplacementTests(CollectionHarness):
         self.write(state)
         before = self.store.load()
         public = self.store.execute('replace-collection', 'I006')
-        self.assertEqual(public['campaign']['completed_milestones'][-1]['id'], 'neighborhood')
-        self.assertEqual(public['campaign']['next_milestone']['id'], 'lighthouse')
-        self.assertEqual(public['collection_progress']['min_condition'], 80)
-        self.assertEqual(public['collection_progress']['qualified_count'], 0)
+        self.assertEqual(public['campaign']['completed_milestones'], before['milestones'])
+        self.assertEqual(public['campaign']['next_milestone']['id'], 'neighborhood')
+        self.assertTrue(public['campaign']['next_milestone']['ready'])
+        self.assertEqual(public['collection_progress']['min_condition'], 75)
+        self.assertEqual(public['collection_progress']['qualified_count'], 5)
         self.assertEqual(public['credits'], before['credits'])
         self.assertEqual(self.store.load()['rng'], before['rng'])
         self.assertEqual(public['energy'], before['energy'] - 1)
+        closed = self.store.execute('endday')
+        self.assertEqual(closed['campaign']['completed_milestones'][-1]['id'], 'neighborhood')
+        self.assertEqual(closed['campaign']['next_milestone']['id'], 'lighthouse')
+        self.assertEqual(closed['collection_progress']['min_condition'], 80)
+        self.assertEqual(closed['collection_progress']['qualified_count'], 0)
 
     def test_public_replacement_explains_available_and_blocked_paths(self):
         state = self.replacement_fixture()
@@ -404,6 +412,7 @@ class CabinetRepairTests(CollectionHarness):
         state['walkins']['day'] = 8
         state['milestones'] = [dict(id=engine.MILESTONES[0]['id'],
                                     title=engine.MILESTONES[0]['title'], day=7)]
+        sync_stage_history(state)
         state['collection'][0]['condition'] = 75
         self.write(state)
         before = self.store.load()
@@ -441,12 +450,17 @@ class CabinetRepairTests(CollectionHarness):
         self.store.execute('endday')
         self.reject('repair', 'I001')
 
-    def test_cabinet_repair_can_finish_milestone_and_updates_new_threshold(self):
+    def test_cabinet_repair_qualifies_milestone_awarded_only_at_closure(self):
         state = cabinet(fixture(1), ['wrench', 'lamp', 'welder', 'coffee', 'cleaner'],
                         [75, 75, 75, 75, 74])
         state['rng'] = random.Random(0).getstate()
         self.write(state)
         public = self.store.execute('repair', 'I005')
+        self.assertEqual(public['campaign']['completed_milestones'], state['milestones'])
+        self.assertEqual(public['campaign']['next_milestone']['id'], 'neighborhood')
+        self.assertTrue(public['campaign']['next_milestone']['ready'])
+        self.assertEqual(public['collection_progress']['min_condition'], 75)
+        public = self.store.execute('endday')
         self.assertEqual(public['campaign']['completed_milestones'][-1]['id'], 'neighborhood')
         self.assertEqual(public['campaign']['next_milestone']['id'], 'lighthouse')
         self.assertEqual(public['collection_progress']['min_condition'], 80)
@@ -558,7 +572,8 @@ class CollectionPrivacyAndTradeTests(CollectionHarness):
                 state['rng'] = rng_for(roll)
                 state['walkins']['budget'] = 120
                 engine.apply_command(state, 'sell', ['I001'])
-                self.assertEqual(digest({key: state[key] for key in ('credits', 'energy', 'rng', 'roll_history', 'roll_seq', 'negotiation', 'inventory', 'walkins', 'visitors', 'stats', 'reputation')}), expected[roll])
+                self.assertTrue(all(row['rules_version'] == 10 for row in state['roll_history']))
+                self.assertEqual(legacy_trade_digest({key: state[key] for key in ('credits', 'energy', 'rng', 'roll_history', 'roll_seq', 'negotiation', 'inventory', 'walkins', 'visitors', 'stats', 'reputation')}), expected[roll])
 
 
 if __name__ == '__main__':

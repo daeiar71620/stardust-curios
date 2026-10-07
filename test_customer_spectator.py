@@ -1,4 +1,4 @@
-"""Synthetic public-only v9 UI checks; no engine or personal save access."""
+"""Synthetic public-only v10 UI checks; no engine or personal save access."""
 import copy
 import json
 from types import SimpleNamespace
@@ -11,7 +11,7 @@ from test_spectator import fixture, percentile_fixture
 
 def customer_fixture():
     obs = fixture()
-    obs['version'] = 9
+    obs['version'] = 10
     obs['walkins'] = {'daily_limit': 1, 'used': 0, 'remaining': 1,
                       'budget_range': [60, 120], 'min_condition': 45,
                       'visit_rule': '每天1次；正式出售无论成交、还价或离店都占用，改价/换货/重启不刷新；次日重置'}
@@ -189,9 +189,9 @@ class CustomerSpectatorTests(unittest.TestCase):
 
     def test_native_final_negotiation_retains_single_exact_public_preview(self):
         self.obs = percentile_fixture(price=165, threshold=58, pending=True)
-        self.obs.update(version=9, walkins=customer_fixture()['walkins'])
-        self.obs['last_roll']['rules_version'] = 9
-        self.obs['negotiation'].update(rules_version=9, origin_rules_version=9)
+        self.obs.update(version=10, walkins=customer_fixture()['walkins'])
+        self.obs['last_roll']['rules_version'] = 10
+        self.obs['negotiation'].update(rules_version=10, origin_rules_version=10)
         words = self.render()
         self.assertIn('还价中 · 最后一次报价', words)
         self.assertIn('低骰成功：01–58 · 成功率 58%', words)

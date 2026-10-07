@@ -1,4 +1,4 @@
-"""Independent native v9 budget audit using synthetic data only.
+"""Independent native v10 budget audit using synthetic data only.
 
 No real save or default save path is read or written. Disk checks use fresh
 TemporaryDirectory fixtures; expected formulas are independent of engine calls.
@@ -92,7 +92,7 @@ class BudgetFormulaIndependentAudit(unittest.TestCase):
                 self.assertEqual(record['roll'], value)
                 self.assertEqual(record['threshold'], 58)
                 self.assertEqual(record['success'], value <= 58)
-                self.assertEqual(record['rules_version'], 9)
+                self.assertEqual(record['rules_version'], engine.TRADE_RULES_VERSION)
                 self.assertIsNone(record['base_chance'])
                 self.assertIsNone(record['premium'])
                 self.assertIsNone(record['counter_offer'])
@@ -112,7 +112,7 @@ class BudgetFormulaIndependentAudit(unittest.TestCase):
 
 class BudgetStateIndependentAudit(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix='budget-v9-independent-synthetic-')
+        self.temp = tempfile.TemporaryDirectory(prefix='budget-v10-independent-synthetic-')
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
 

@@ -42,7 +42,7 @@ def fixture():
     known = dict(slot=1, discovered=True, collected=True,
                  **{key: cabinet[key] for key in ('art_id','name','kind','rarity','description','collection_quality')})
     entries = [known] + [dict(slot=i, discovered=False, collected=False) for i in range(2,25)]
-    return dict(version=9, revision=1, day=15, credits=2000, energy=6, max_energy=12, reputation=20,
+    return dict(version=10, revision=1, day=15, credits=2000, energy=6, max_energy=12, reputation=20,
                 phase='active', inventory=[better,worse], collection=[cabinet], crates=[], capacity=10,
                 codex=dict(total=24, discovered=1, collected=1, entries=entries), collection_progress=progress,
                 campaign=dict(next_milestone=dict(title='星港地标', goals=[

@@ -12,9 +12,9 @@
 python3 engine.py --save /path/to/my-shop.json status
 ```
 
-仅在用户确实要开新局时，对不存在的路径执行 `new`。缺失、损坏或不支持的存档都不能成为自动重开的理由；保留原文件并说明问题。`new` 不覆盖已有文件，`restart --confirm` 会清空整局，不能作为普通错误恢复或重掷手段。这里只支持原生 v9，没有导入、迁移或旧版本兼容入口。
+仅在用户确实要开新局时，对不存在的路径执行 `new`。缺失、损坏或不支持的存档都不能成为自动重开的理由；保留原文件并说明问题。`new` 不覆盖已有文件，`restart --confirm` 会清空整局，不能作为普通错误恢复或重掷手段。这里只支持原生 v10，没有导入、迁移或旧版本兼容入口。
 
-本次整理未改动引擎字节，已有原生 v9 存档仍可继续。代码换位置时，显式指定原来的存档路径；不要因此复制、迁移或重建这一局。当前正在运行的游戏无需切换源码或路径。
+v10 的经营规则已更新，只能另开新档。不要用新版打开或迁移 v9 私档；旧局可保留原程序继续。继续同一份 v10 游戏时明确指定原路径，不因代码位置改变而重建这一局。
 
 公开路径规则：默认的 `engine.py` 同目录 `save.json` 对应 `observation.json`；其他路径取文件主名加 `.observation.json`，例如 `/path/to/my-shop.json` 对应 `/path/to/my-shop.observation.json`，其他目录的 `save.json` 对应 `save.observation.json`。显式 `--save` 若仍指向默认那个文件，沿用默认规则。
 
@@ -29,7 +29,7 @@ python3 spectator.py --observation /path/to/my-shop.observation.json --fullscree
 ## 每一步怎样玩
 
 1. 读取 CLI 返回的公开状态；接手已有局或结果有疑问时先执行 `status`
-2. 检查 `phase`、精力、现金、维护费、货架容量、供应商库存、顾客剩余次数、当前谈判和下一阶段目标
+2. 检查 `phase`、精力、现金、维护费明细、实际阶段期限、当前逾期费、货架容量、供应商库存、顾客剩余次数、当前谈判和下一阶段目标
 3. 用公开信息选一个合法动作，并说明这一步的取舍；有需要可先免费 `inspect` 或 `preview-offer`
 4. 执行一个命令，等待完成并保留返回结果中的 `revision`、`last_event` 和有关状态
 5. 根据实际结果重新判断；不要预写依赖未知开箱、骰点或成交结果的整串命令
@@ -46,6 +46,7 @@ python3 engine.py --save PATH COMMAND [ARGS]
 |---|---|
 | 完整公开状态 | `status` |
 | 当天市场／顾客／图鉴 | `market`／`visitors`／`codex` |
+| 第 8 天后定向采购 | `buy focused KIND`，类别和剩余名额看公开供应商信息 |
 | 采购／开箱 | `buy salvage` 或 `buy curated`／`open CRATE_ID` |
 | 查看货架或收藏中的物品 | `inspect ITEM_ID` |
 | 标价／修理 | `price ITEM_ID PRICE`／`repair ITEM_ID` |
@@ -75,7 +76,10 @@ python3 engine.py --save PATH COMMAND [ARGS]
 - 接受公开还价不耗精力、不掷骰；最终报价耗 1 精力，且必须满足“还价 < 最终价 < 初次标价”
 - `preview-offer` 给出精确最终成功率，不写私档、不耗资源、不推进随机数；提交后失败收入为 0，不能再接受旧还价
 - `last_roll` 可能只是历史骰点；实际成交收入要看最新事件、现金与谈判状态，不把旧失败报价当成收入
-- 留出公开 `operating_cost`；闭店会支付维护费，并自动谢绝尚未完成的还价
+- 留出完整 `operating_cost`，并读 `operating_cost_breakdown`；闭店先自动谢绝待谈、支付当天费用，再核验阶段，不能把扣费前的现金当成已经达标
+- 首周设施费为 0，但 `facility_upkeep_from_day8` 和升级详情会公开未来开销；决定升级前同时看一次性成本和日费
+- 以 `campaign.next_milestone.effective_due_day` 为实际期限；逾期不会直接判负，但当前阶段从次日开始产生封顶加费。完成后旧逾期记录保留，不继续叠收
+- 定向采购每日只有一箱，价格高于普通精选箱，采购精力相同；根据公开的类别缺口选择，不根据未发现身份猜测下一抽，也不把它当作保证新品或保证好品相
 - 个人收藏允许任何品相，阶段进度只算达到当前门槛的不同藏品；以 `collection_progress` 和 `campaign.next_milestone` 判断缺口
 - 收藏柜可修理，也可花 1 精力用货架上严格更好的同款一换一；依据公开可用性判断，不假定旧藏品已达新阶段门槛
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent native v9 campaign audit. All game data is synthetic and stays in TemporaryDirectory."""
+"""Independent native v10 campaign audit. All game data is synthetic and stays in TemporaryDirectory."""
 import copy
 import json
 import os
@@ -105,14 +105,14 @@ class CampaignAuditTests(unittest.TestCase):
             self.assertEqual(public["credits"], before["credits"] - engine._operating_cost(before))
             self.assertNotEqual(public["daily_event"]["id"], before["daily_event"]["id"])
             self.assertEqual(public["energy"], public["max_energy"])
-            self.assertEqual([s["stock"] for s in public["suppliers"]], [4, 2])
+            self.assertEqual({s['id']: s['stock'] for s in public['suppliers']}, {'salvage': 4, 'curated': 2, 'focused': 1})
             self.assertTrue(all(v["status"] == "waiting" for v in public["visitors"]))
 
     def test_late_first_week_goal_can_unlock_after_missed_summary(self):
         self.prepare_week(100, True)
         self.store.execute("continue")
         state = self.store.load()
-        state["credits"] = 650
+        state["credits"] = 650 + engine._operating_cost(state)
         self.write(state)
         state["inventory"] = [self.synthetic_item("coffee", "I003")]
         state["next_item"] = 4
@@ -120,6 +120,8 @@ class CampaignAuditTests(unittest.TestCase):
         self.write(state)
         public = self.store.execute("price", "I003", "40")
         self.assertEqual(public["campaign"]["first_week_result"], "missed")
+        self.assertEqual(public['campaign']['completed_milestones'], [])
+        public = self.store.execute('endday')
         self.assertEqual(public["campaign"]["completed_milestones"][0]["id"], "first_week")
         self.assertEqual(public["campaign"]["next_milestone"]["id"], "neighborhood")
 
