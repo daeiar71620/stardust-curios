@@ -1,96 +1,105 @@
-# Stardust Curios
+# 星屑杂货铺 · Python 独立版
 
-> Source-release status: this complete integration has **not been deployed**. The actual remotely edited Site source identified as `6f03a60a` still needs reconciliation, and final phone/desktop browser QA remains open. Follow [the Site editor handoff](docs/SITE_EDITOR_HANDOFF.md); do not replace the remote app from a stale local checkout.
+一间停在星港边上的小店：回收盲箱、修理旧物、接待旅客，也为自己留下收藏。`engine.py` 是游戏的正式规则与存档入口。直接运行 Python 就能玩；有桌面时可以另开只读观战窗口。
 
-A small private AI-run shop game with a read-only phone spectator. The current
-TypeScript rules run inside the Site: an operation atomically commits private
-state, its public projection and an idempotent receipt to D1. The phone reads that
-same public projection. There is no post-action upload process.
+保留原生 v9 的双 D10 百分骰、平滑预算、品质收藏目标和持续经营。包含 24 种货物、8 位特邀顾客、3 项设施、5 套收藏与港口事件。详细规则见[店主手册](PLAY_GUIDE.md)，交给 AI 经营时见 [AI_PLAY.md](AI_PLAY.md)。
 
-## Source layout
+## 只用命令行
 
-- `lib/game-engine/`: the single authoritative TypeScript rules implementation
-- `lib/game-authority.ts`: identity-scoped revision checks, atomic commits and receipts
-- `app/mcp/`: current and initialization-based MCP transport with three game tools
-- `app/viewer.tsx`: read-only phone/desktop spectator
-- `assets/server-art/`: private source illustrations; never static web assets
-- `scripts/build-art.mjs`: verified, reproducible server-only artwork module generation
-- `reference/python/`: latest-only Python reference and renderer for offline verification
-- `tests/engine/`: synthetic comparisons against that independent reference
+引擎只用 Python 标准库，不需要安装第三方包。文件锁使用 POSIX `fcntl`，适用于 Linux/macOS，不支持 Windows 原生 Python。
 
-Current game rules remain version 9. Old game formats, migration commands, D20
-history and collection-transition grace are unsupported. Transport compatibility
-for existing connected MCP clients is separate from game-save compatibility.
-
-## Local checks
-
-Use the supported Sites runtime and Node 22.13+ (Node 24 recommended for tests),
-Python 3 and the pinned Pillow dependency for renderer checks.
+在项目目录运行：
 
 ```sh
-npm run build:art
-npm run check
-npm run test:site
-npm run test:engine
-npm run build
+python3 engine.py help
 ```
 
-`test:engine` is a long synthetic differential suite. It creates no real game
-state and reads no user saves. See docs/ENGINE_VALIDATION.md and the reference
-QA report for counts, numeric limits and reproducibility. Native state rejects
-non-null historical provenance; the 39-field public contract remains stable.
+确定要开新局时，选一个尚不存在的存档路径：
 
-## Playing through the connected Site
+```sh
+python3 engine.py --save ./games/my-shop.json new
+```
 
-The stable tools are `stardust_game_state`, `stardust_game_query`, and
-`stardust_game_action`. Read current revision before choosing an action. A chosen
-action supplies one unique operation ID and expected revision. If its response
-is uncertain, retry exactly that ID and those arguments. A duplicate returns the
-original receipt and never repeats the game action.
+以后每次使用同一路径，一次执行一个命令，读完结果再决定下一步：
 
-`initialize` explicitly starts a new game: args `[]` or `["test"]` creates a test
-game; `["formal"]` creates a formal game only when the user asks after testing.
-Previous state is retained privately in the database before replacement, in the
-same transaction. Authority revisions remain monotonic across new games, so old
-requests cannot become valid again. Seeds are server-generated and never accepted
-from clients. There is no autoplay, arbitrary-save upload or import endpoint.
+```sh
+python3 engine.py --save ./games/my-shop.json status
+```
 
-The observer has inventory, customers, catalog, collections, facilities, log and
-dice views. Visible pages check for changes every 2 seconds, use conditional
-responses, and distinguish connection health from the last game-action time.
-Gameplay stays in chat; page buttons only navigate or inspect public information.
+例如看过当天供应商和价格后，可以采购一箱：
 
-## Illustrations and privacy
+```sh
+python3 engine.py --save ./games/my-shop.json buy salvage
+```
 
-All 24 original Pillow illustrations are prepackaged privately with verified
-hashes. An authenticated image request must first match the current game's
-discovered catalog. Unknown IDs and stale game IDs are rejected before private
-asset or cache access. Only then may an image be served from the private R2 cache
-or bundled seed. Cache corruption/outage falls back to the verified seed and
-never rolls back a game action. R2 writes are not part of the D1 transaction.
+再使用返回结果中的箱子编号执行 `open`。物品、顾客编号和报价都以当前公开状态为准，不要把教程示例当作批量脚本。
 
-The browser receives no private RNG, hidden budgets, sealed cargo or complete
-catalog asset manifest. The public source repository contains game source and
-synthetic art, not any player's state, credentials or Site ownership settings.
+常用命令包括 `market`、`visitors`、`open`、`inspect`、`price`、`sell`、`repair`、`collect`、`replace-collection`、`upgrade` 和 `endday`。`help` 列出完整用法。第 7 天闭店会停在首周结算，明确执行 `continue` 才进入第 8 天；未达首周目标也可继续，破产则结束本局。
 
-## Deployment and limits
+## 可选观战窗口
 
-Use the supported Sites flow for the intended existing private Site. The hosting
-manifest here is generic and contains no owner/project identity. Reconcile the
-actual remote source before updating an existing Site, retain its hosting
-identity/access configuration, then save and deploy the exact verified build.
-A local build or source backup is not a deployment.
+窗口读取公开状态并自动刷新；经营仍通过 CLI 进行。关掉窗口不会闭店，没有窗口也能完整游玩。
 
-`drizzle/` preserves applied migration history. Retired mirror/counter tables are
-left recoverable and have no live application routes; cleanup never silently
-purges data. The historical physical native-table names also preserve existing
-operation receipts. New games never accept old rule versions.
+窗口需要 Pillow 12.3.0、Tk、中文字体和可用的图形显示环境。当前绘图器查找 Linux 字体路径，以下以 Debian/Ubuntu 为例；macOS 可直接玩命令行，但窗口尚未提供适配的字体安装流程。
 
-Known numeric limit: a small set of engineered arbitrary floating-point references
-differs between V8 and CPython log2. Tested reachable item references and long
-campaigns match; the explicit numeric TODO is retained rather than hidden.
+```sh
+sudo apt install python3-venv python3-tk fonts-noto-cjk
+python3 -m venv .venv
+. .venv/bin/activate
+python3 -m pip install -r requirements-spectator.txt
+python3 spectator.py --observation ./games/my-shop.observation.json --fullscreen
+```
 
-The current integration still needs a final remote-source reconciliation, native
-Sites publication and live full-spectator verification. Local Chromium visual
-QA was unavailable where process sockets were denied; synthetic render/sync tests
-are separate evidence and do not claim a screenshot was inspected.
+1–5 切换货架、旅客、图鉴、成长、日志；←/→ 翻页，点击物品查看详情，点击骰卡查看历史，Esc 关闭详情，F11 切换全屏。窗口不创建存档；公开文件不存在时只等待。
+
+## 存档与公开文件
+
+存档路径和画面路径必须配对：
+
+| 引擎存档 | 对应公开文件 |
+|---|---|
+| 默认：`engine.py` 所在目录的 `save.json` | 同目录 `observation.json` |
+| `./games/my-shop.json` | `./games/my-shop.observation.json` |
+| 其他目录的 `save.json`，如 `./games/save.json` | `./games/save.observation.json` |
+
+路径按实际解析后的文件位置判断；显式指定默认那个 `save.json`，仍使用同目录的 `observation.json`。其他自定义路径一律取文件主名加 `.observation.json`。相对 `--save` 路径相对于当前工作目录；省略 `--save` 时，默认存档跟随 `engine.py` 的位置。
+
+私档由引擎维护，包含隐藏价值、精确预算、箱内货物和随机状态。玩家、AI 与窗口只读 CLI 的公开输出或对应的公开文件；不要直接读取或修改私档来决定玩法。
+
+`new` 拒绝覆盖已有存档。已有局用 `status` 接着看；不自动开局、覆盖或重启。`restart --confirm` 会清空所选整局，只有明确想重开时才使用。仅支持原生 v9 存档，没有旧档兼容、导入或迁移入口；遇到不支持的文件请保留原件。
+
+本次整理保持 `engine.py` 字节不变，已有原生 v9 局仍可使用。以后移动或更新源码时，显式传入原存档的 `--save` 路径接着玩，不要仅因代码位置改变而 `new`、`restart`、复制或迁移存档。当前正在运行的游戏无需因此切换源码或路径。
+
+## 出错时先查状态
+
+合法经营动作成功后返回完整公开 JSON，并增加 `revision`。免费查看和最终报价预览不推进随机数、资源或版本号。参数错误、资源不足等游戏拒绝不会改变私档。
+
+CLI 没有动作 ID 去重机制。若命令超时、输出丢失或收到 `persistence_warning`，不要盲目重发：动作可能已经保存。先对同一路径运行 `status`，用公开 `revision`、`last_event`、`log`、库存与谈判状态核对结果；无法判定时暂停经营。修复目录权限或磁盘问题后，`status` 也会重建公开文件。
+
+跨进程锁能防止写入冲突，不能替调用方去掉重复动作。每局只安排一个经营者，窗口可以一直开着。
+
+## 验证与文件
+
+无桌面、无第三方包时运行引擎与独立入口测试：
+
+```sh
+python3 run_tests.py --headless
+```
+
+装好观战依赖与字体后运行完整测试：
+
+```sh
+python3 run_tests.py
+```
+
+测试使用合成场景和临时目录，不读取或推进真实游戏。发布包不包含玩家存档、真实公开状态或游玩截图。
+
+- `engine.py`：正式规则、CLI、私档与公开投影
+- `spectator.py`：只读窗口与原有 24 种物品绘图
+- `AI_PLAY.md`：AI 逐步经营约定
+- [PLAY_GUIDE.md](PLAY_GUIDE.md)：完整玩法与规则
+- [OBSERVATION_SCHEMA.md](OBSERVATION_SCHEMA.md)：公开 JSON 协议
+- [QA_REPORT.md](QA_REPORT.md)：验证范围与结果
+- `run_tests.py`、`test_*.py`：测试入口与合成测试
+
+许可协议尚未选定，本目录未授予额外开源许可。

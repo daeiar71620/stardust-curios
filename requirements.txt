@@ -1,0 +1,2 @@
+# Headless CLI uses only the Python standard library; nothing to install.
+# Optional desktop/snapshot viewer: pip install -r requirements-spectator.txt

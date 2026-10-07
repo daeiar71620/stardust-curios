@@ -1,0 +1,2 @@
+# Optional Pillow renderer; Tkinter, a display and CJK fonts are OS dependencies.
+Pillow==12.3.0

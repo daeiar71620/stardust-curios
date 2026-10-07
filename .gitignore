@@ -1,66 +1,32 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
-
-# dependencies
-/node_modules
-/.pnp
-.pnp.*
-.yarn/*
-!.yarn/patches
-!.yarn/plugins
-!.yarn/releases
-!.yarn/versions
-
-# testing
-/coverage
-
-# next.js
-/.next/
-/.vinext/
-/out/
-
-# misc
-.DS_Store
-*.pem
-
-# debug
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-.pnpm-debug.log*
-
-# env files (can opt-in for committing if needed)
-.env*
-
-# vercel
-.vercel
-
-# typescript
-next-env.d.ts
-/dist/
-/.wrangler/
-# Checkout-local execution profile and tool state; never publish them.
-/.sites-runtime/
-/.agents/
-/.codex/
-/outputs/
-/work/
-
-qa-local/
-
-# Generated code/data; canonical source lives in assets/server-art.
-lib/server-art-data.ts
-lib/server-art-manifest.ts
-*.tsbuildinfo
+# Python development artifacts
 __pycache__/
-*.pyc
-qa-only/
-# Game saves and local runtime configuration are never source artifacts.
-save.json
-observation.json
-*.observation.json
-*-run/
-current-shop*.json
-INTEGRATION_STATUS.md
+*.py[cod]
+.venv/
+venv/
+.coverage
+htmlcov/
+.pytest_cache/
 
-# Local differential output is not source.
-*.tap
+# Private saves, observations and runtime files
+/*.json
+*.observation.json
+*.lock
+*.log
+*.pid
+*.tmp
+/backups/
+/saves/
+/games/
+/screenshots/
+/ui-qa/
+*-preview.png
+*.before-restore.json
+
+# Local credentials/settings and generated release artifacts
+.env
+.env.*
+*.pem
+credentials*.json
+*.local.json
+.DS_Store
+*.zip
