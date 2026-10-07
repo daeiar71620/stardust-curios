@@ -145,18 +145,19 @@ class BudgetSpectatorTests(unittest.TestCase):
             path = Path(directory) / 'synthetic.observation.json'
             path.write_text(json.dumps(self.observation, ensure_ascii=False))
             before = path.read_bytes()
-            original_read = Path.read_text
+            original_read = Path.open
             calls = []
             def checked_read(source, *args, **kwargs):
                 self.assertEqual(source, path)
+                self.assertEqual(args, ('rb',))
                 calls.append(source)
                 return original_read(source, *args, **kwargs)
-            with mock.patch.object(Path, 'read_text', checked_read), mock.patch.object(Path, 'write_text', side_effect=AssertionError('viewer write')):
+            with mock.patch.object(Path, 'open', checked_read), mock.patch.object(Path, 'write_text', side_effect=AssertionError('viewer write')):
                 reader = ObservationReader(path)
                 self.assertTrue(reader.poll())
                 self.renderer.render(reader.observation, (390, 844))
                 self.assertFalse(reader.poll())
-            self.assertEqual(calls, [path])
+            self.assertEqual(calls, [path, path])
             self.assertEqual(path.read_bytes(), before)
             self.assertEqual(list(Path(directory).iterdir()), [path])
 

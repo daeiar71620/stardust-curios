@@ -2,7 +2,7 @@
   "schema_version": 1,
   "visibility": "server-private",
   "source": "synthetic-public-renderer-items",
-  "renderer_sha256": "bd4c5a585aae98b20914e36147fb7518140c745ff24951f59920eab6b65e8a54",
+  "renderer_sha256": "994e697a775f48dcf04107e72df169c414333724c37dac9ed3b860e02e9149a6",
   "pillow_version": "12.3.0",
   "width": 512,
   "height": 512,

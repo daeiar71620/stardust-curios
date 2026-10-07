@@ -108,12 +108,14 @@ class ReaderTests(unittest.TestCase):
     def test_reader_reads_only_one_public_path_and_never_writes(self):
         sentinel=self.directory/'save.json';sentinel.write_text('PRIVATE_SENTINEL')
         before={p.name:p.read_bytes() for p in self.directory.iterdir()}
-        read_calls=[];orig=Path.read_text
-        def record(path,*args,**kwargs):read_calls.append(path);return orig(path,*args,**kwargs)
-        with patch.object(Path,'read_text',record):
+        read_calls=[];orig=Path.open
+        def record(path,*args,**kwargs):
+            self.assertEqual(path,self.path);self.assertEqual(args,('rb',))
+            read_calls.append(path);return orig(path,*args,**kwargs)
+        with patch.object(Path,'open',record):
             reader=ObservationReader(self.path);self.assertTrue(reader.poll());self.assertFalse(reader.poll())
             Renderer().render(reader.observation)
-        self.assertEqual(read_calls,[self.path])
+        self.assertEqual(read_calls,[self.path,self.path])
         self.assertEqual(before,{p.name:p.read_bytes() for p in self.directory.iterdir()})
     def test_save_path_and_save_symlink_are_rejected_before_read(self):
         with self.assertRaises(ValueError):ObservationReader(self.directory/'save.json')

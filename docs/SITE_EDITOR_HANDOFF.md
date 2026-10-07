@@ -22,7 +22,7 @@ Keep one canonical rules implementation at `lib/game-engine/`; `reference/python
 
 Run the reproducible artwork build, TypeScript/ESLint checks, Site tests and the production build against the reconciled source. If rule, projection, validation or RNG files change, rerun the relevant differential suites and the full engine/reference gates before publishing. Compare the client bundle against hidden catalog names and image markers, and confirm that only the client output is statically served. Server artwork and state must remain server-only.
 
-The release baseline is 2,536 distinct passing checks plus one documented arbitrary-float log2 TODO, with 61 Site tests passing again after clean ZIP extraction. Preserve the TODO and its bounded domain description; do not call it universal floating-point equivalence.
+The release baseline is 2,543 distinct passing checks plus one documented arbitrary-float log2 TODO, with 61 Site tests passing again after clean ZIP extraction. Preserve the TODO and its bounded domain description; do not call it universal floating-point equivalence.
 
 ## 4. Publish only the verified source through the supported flow
 

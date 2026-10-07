@@ -8,15 +8,20 @@ complete application has been deployed or visually verified in a browser.
 | Gate | Result |
 | --- | --- |
 | Canonical TypeScript engine and synthetic differential tests | 2,195 passed; one explicit numeric TODO |
-| Latest-only Python reference and renderer tests | 275 passed |
+| Latest-only Python reference and renderer tests | 282 passed |
 | Authority, private artwork, MCP transport, and spectator synchronization | 61 passed |
 | Reproducible illustration checks | 5 passed |
 | TypeScript and ESLint | Passed with no errors or warnings |
 | Production build | Passed |
 
-The distinct aggregate is **2,536 passed and one TODO**. The engine suite was
+The distinct aggregate is **2,543 passed and one TODO**. The engine suite was
 also run independently against both the trusted original v9 implementation and
 the cleaned Python reference; those duplicate runs are not counted twice.
+The reader cache repair reran the full 282-check Python suite, the 61 Site
+checks, artwork verification, type/lint checks, and the production build; its
+seven deterministic regressions also passed 50 consecutive runs. Rules and RNG
+source remain byte-identical to the preceding validated release. See
+[READER_CACHE_FIX.md](READER_CACHE_FIX.md) for the reproduced failure and repair.
 See [ENGINE_VALIDATION.md](ENGINE_VALIDATION.md) for exact campaign, RNG, numeric,
 and native-state domains, and the reference's QA report for Python details.
 

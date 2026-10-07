@@ -429,31 +429,41 @@ class ObservationReader:
             raise ValueError('观战窗口只能读取公开 observation 文件，不能读取存档')
         self.observation = None
         self.stamp = None
+        self._contents = None
+        self._generation = 0
         self.error = None
         self.updated_at = None
 
     def poll(self):
         try:
-            stat = self.path.stat()
-            if stat.st_size > 4 * 1024 * 1024:
+            # Metadata can remain identical after an in-place or atomic rewrite.
+            # Read one bounded snapshot; only unchanged accepted bytes may skip
+            # parsing. Opening each time also detects lost read permission.
+            limit = 4 * 1024 * 1024
+            with self.path.open('rb') as source:
+                contents = source.read(limit + 1)
+            if len(contents) > limit:
                 raise ValueError('公开状态文件过大')
-            stamp = (stat.st_mtime_ns, stat.st_size)
-            if stamp == self.stamp:
+            if contents == self._contents:
                 self.error = None
                 return False
-            data = json.loads(self.path.read_text(encoding='utf-8'))
+            data = json.loads(contents.decode('utf-8'))
             if not isinstance(data, dict) or 'credits' not in data or not isinstance(data.get('inventory', []), list):
                 raise ValueError('等待有效的公开状态')
             if not native_observation(data):
                 self.observation = None
                 self.stamp = None
+                self._contents = None
+                self.updated_at = None
                 self.error = '不支持此公开状态版本 · 仅支持 v9'
                 return False
             # Private engine state is never public output.
             if any(k in data for k in ('rng_state', 'rng', 'hidden_items', '_rng', 'random_state')):
                 raise ValueError('文件含非公开状态，已拒绝读取')
             self.observation = data
-            self.stamp = stamp
+            self._contents = contents
+            self._generation += 1
+            self.stamp = self._generation
             self.error = None
             self.updated_at = time.monotonic()
             return True
