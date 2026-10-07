@@ -1,65 +1,66 @@
-__pycache__/
-*.py[cod]
-.venv/
-*.lock
-*.log
-*.pid
-*.tmp
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/.vinext/
+/out/
+
+# misc
 .DS_Store
-.library-helper/
-/save.json
-/observation.json
-/new-game*.json
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+.env*
+
+# vercel
+.vercel
+
+# typescript
+next-env.d.ts
+/dist/
+/.wrangler/
+# Checkout-local execution profile and tool state; never publish them.
+/.sites-runtime/
+/.agents/
+/.codex/
+/outputs/
+/work/
+
+qa-local/
+
+# Generated code/data; canonical source lives in assets/server-art.
+lib/server-art-data.ts
+lib/server-art-manifest.ts
+*.tsbuildinfo
+__pycache__/
+*.pyc
+qa-only/
+# Game saves and local runtime configuration are never source artifacts.
+save.json
+observation.json
 *.observation.json
-*.before-restore.json
-/backups/
-/saves/
-/screenshots/
-# Root JSON files default to private runtime data; one explicit synthetic report is public.
-/*.json
-!/management-simulation.json
-/ui-qa/
-/ui-*-preview.png
+*-run/
+current-shop*.json
+INTEGRATION_STATUS.md
 
-# Generated synthetic demonstrations are temporary test outputs, never releases.
-/dice-fixtures/
-/management-fixtures/
-**/PUBLIC_PLAYTHROUGH.md
-/demo-*/
-/*-demo.json
-/*-demo.png
-/*-demo.jpg
-
-# Private publication state and access material must never enter releases.
-*.action-publish.binding.json
-config.local*.json
-*.local.json
-.env
-.env.*
-credentials*.json
-**/outbox/
-**/receipts/
-**/known-art/
-**/private-images/
-**/runtime/
-
-# Current-shop pointer and switch recovery records are private runtime data.
-current-shop.json
-*.current-shop.json
-*.switches/
-.pytest_cache/
-
-# Experimental authority databases and object storage are always private.
-*.sqlite
-*.sqlite-*
-*.db
-*.db-*
-/tools/experimental_colocated/work/
-/tools/experimental_colocated/objects/
-
-# Worker experiments ship source/oracles only, never generated fixtures or builds.
-/tools/experimental_worker/node_modules/
-/tools/experimental_worker/.generated/
-/tools/experimental_worker/fixtures-generated/
-/tools/experimental_worker/coverage/
-/tools/experimental_worker/dist/
+# Local differential output is not source.
+*.tap
