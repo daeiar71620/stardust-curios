@@ -1,0 +1,41 @@
+{
+  "artifact_kind": "undeployed_site_source_patch_backup",
+  "target_project": "separate Site application source, not the public game checkout",
+  "site_base_commit": "f8b96416f75c18aa06947d4f26fc8b5c1929adde",
+  "public_backup_base_commit": "45a7a6681112d713f5f8f7578b90bf09178b4281",
+  "patch_filename": "modern-mcp.patch",
+  "patch_sha256": "98668bb82b80cc33dcf2586ad738eac704ee7baf4ab9754b7de143298a75b97d",
+  "validation_record_sha256": "884952ed357293b5eddaaecd42b88cb35cfc5c8f6070591f23686bb0be0b99e2",
+  "validated_output_sha256": {
+    "app/mcp/route.ts": "cecd4e18ad6d8bcb49e3d6d84089daefbd6f335a75cd3a8bae167e8a8957ec5d",
+    "tests/mcp-protocol.test.mjs": "bd4cb6d0e3283b91863ab81be8a351177c2d3a7f94ee832e9eeb1dff1d7916bd",
+    "docs/MCP_PROTOCOL.md": "a566531fabc283e2872bebf170523d4724ea3ffad3d7353c98e44d65305c08c4"
+  },
+  "patch_targets": [
+    "app/mcp/route.ts",
+    "tests/mcp-protocol.test.mjs",
+    "docs/MCP_PROTOCOL.md"
+  ],
+  "publication_checks": {
+    "unchanged_patch_bytes": true,
+    "unchanged_validation_record": true,
+    "git_apply_numstat": "passed; 3 expected files",
+    "new_file_reconstruction_hashes": "tests/mcp-protocol.test.mjs and docs/MCP_PROTOCOL.md match frozen output hashes",
+    "existing_route_hash": "retained from owner validation; separate Site base not reapplied by backup task",
+    "privacy_scan": "no private Site hosts/IDs, environment paths, credential patterns or account email addresses",
+    "source_review": "generic protocol route/tests/docs only; synthetic destinations"
+  },
+  "test_scope": {
+    "focused_protocol_tests": 17,
+    "site_js_total_including_focused": 27,
+    "legacy_authority_route_privacy_groups": 30,
+    "typecheck": "passed on validated Site source",
+    "scoped_lint": "passed on validated Site source",
+    "build": "passed on validated Site source"
+  },
+  "deployed": false,
+  "plugin_update_archive": false,
+  "production_discovery_verified": false,
+  "production_root_cause_confirmed": false,
+  "real_game_or_runtime_changed": false
+}

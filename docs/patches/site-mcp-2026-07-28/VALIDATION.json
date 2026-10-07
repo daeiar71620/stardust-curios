@@ -1,0 +1,23 @@
+{
+  "validated_at_utc": "2026-10-07T06:39:32Z",
+  "base_commit": "f8b96416f75c18aa06947d4f26fc8b5c1929adde",
+  "focused_protocol_tests": 17,
+  "site_js_tests": 27,
+  "legacy_authority_route_privacy_groups": 30,
+  "typecheck": "passed",
+  "lint": "passed",
+  "build": "passed",
+  "deployment": "not_attempted_native_sites_tools_unavailable",
+  "production_root_cause": "not_confirmed",
+  "files": {
+    "app/mcp/route.ts": "cecd4e18ad6d8bcb49e3d6d84089daefbd6f335a75cd3a8bae167e8a8957ec5d",
+    "tests/mcp-protocol.test.mjs": "bd4cb6d0e3283b91863ab81be8a351177c2d3a7f94ee832e9eeb1dff1d7916bd",
+    "docs/MCP_PROTOCOL.md": "a566531fabc283e2872bebf170523d4724ea3ffad3d7353c98e44d65305c08c4"
+  },
+  "notes": [
+    "Standards-conformant synthetic 2026-07-28 discovery: prepatch400, current200",
+    "Original logged production request body unavailable; not an exact packet replay",
+    "No identity, sharing, credentials, game rules, database or save changes",
+    "User interface tool registration still requires fresh production verification"
+  ]
+}
